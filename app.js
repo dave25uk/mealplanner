@@ -1,6 +1,7 @@
 const supabaseUrl = 'https://qysscushyrhgrodlpovg.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5c3NjdXNoeXJoZ3JvZGxwb3ZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4MjE3NzEsImV4cCI6MjA5MTM5Nzc3MX0.1KMpTrpzmi6d-r3nbPzGunpiYHkAjpUxuB32RtAlJqI';
 const _supabase = supabase.createClient(supabaseUrl, supabaseKey);
+console.log("Supabase Key Loaded:", supabaseKey.substring(0, 5) + "...");
 
 let startDate = new Date();
 
