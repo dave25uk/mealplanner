@@ -1,0 +1,48 @@
+body {
+    font-family: -apple-system, system-ui, sans-serif;
+    background-color: #f2f2f7;
+    margin: 0;
+    padding: env(safe-area-inset-top) 15px 20px 15px;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 0;
+}
+
+h2 { margin: 0; font-size: 20px; }
+
+button {
+    background: #e5e5ea;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 8px;
+    font-weight: 600;
+}
+
+.date-card {
+    background: white;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.date-card label {
+    display: block;
+    font-size: 14px;
+    color: #8e8e93;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+
+input {
+    width: 100%;
+    border: none;
+    font-size: 18px;
+    outline: none;
+    color: #007aff;
+    background: transparent;
+}
