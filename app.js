@@ -8,9 +8,11 @@ let touchendX = 0;
 let activePickerDate = null;
 
 async function init() {
+    // Immediate render so the user sees something right away
     renderUI();
     
-    const gestureArea = document.getElementById('calendar-container');
+    // Broadened to app-container to ensure swipes are caught
+    const gestureArea = document.getElementById('app-container');
     
     gestureArea.addEventListener('touchstart', e => { 
         touchstartX = e.changedTouches[0].screenX; 
@@ -23,7 +25,8 @@ async function init() {
     }, {passive: true});
 
     document.addEventListener('touchmove', function (e) {
-        if (e.target.closest('.modal-content') || e.target.closest('#calendar-container')) {
+        // Allows scrolling inside the modal and the main meal list
+        if (e.target.closest('.modal-content') || e.target.closest('main')) {
             return;
         }
         e.preventDefault();
@@ -59,8 +62,7 @@ function renderHeader() {
 
 async function renderMeals() {
     const wrapper = document.getElementById('calendar-wrapper');
-    wrapper.innerHTML = '';
-
+    
     let dStart = new Date(currentViewDate);
     let dEnd = new Date(currentViewDate);
     dEnd.setDate(dEnd.getDate() + 6);
@@ -69,6 +71,9 @@ async function renderMeals() {
         .select('date, meal_name')
         .gte('date', dStart.toISOString().split('T')[0])
         .lte('date', dEnd.toISOString().split('T')[0]);
+
+    // Clear wrapper only after data is fetched to prevent white flicker
+    wrapper.innerHTML = '';
 
     for (let i = 0; i < 7; i++) {
         let d = new Date(currentViewDate);
@@ -104,7 +109,9 @@ async function openPicker(dateStr, readableDate) {
     document.getElementById('picker-date-label').innerText = readableDate;
     input.value = '';
     modal.style.display = 'block';
-    input.focus();
+    
+    // Small delay helps iOS keyboard focus correctly
+    setTimeout(() => input.focus(), 100);
 
     const { data: allMeals } = await _supabase.from('meals').select('name').order('name');
 
@@ -140,22 +147,18 @@ window.selectMeal = async (name) => {
     let rawName = name.trim();
     if (!rawName) return;
 
-    // Convert to Sentence case (e.g., "spicy tacos" -> "Spicy tacos")
     const formattedName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
 
-    // Case-insensitive check in Supabase
     const { data: existing } = await _supabase
         .from('meals')
         .select('name')
-        .ilike('name', formattedName) // 'ilike' is the Postgres case-insensitive operator
+        .ilike('name', formattedName)
         .maybeSingle();
 
     if (!existing) {
-        // Only insert if it doesn't exist in any case format
         await _supabase.from('meals').insert({ name: formattedName });
     }
 
-    // Use the existing name format if found, otherwise use our new one
     const finalName = existing ? existing.name : formattedName;
 
     await _supabase.from('calendar').upsert({ 
@@ -168,7 +171,6 @@ window.selectMeal = async (name) => {
 };
 
 async function deleteEntry(dateStr) {
-    // Added confirmation dialog
     if (confirm("Are you sure you want to remove this meal from the calendar?")) {
         await _supabase.from('calendar').delete().eq('date', dateStr);
         renderMeals();
