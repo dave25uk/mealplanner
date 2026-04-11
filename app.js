@@ -140,31 +140,44 @@ window.selectMeal = async (name) => {
     let rawName = name.trim();
     if (!rawName) return;
 
-    // Convert to Sentence case (e.g., "spicy tacos" -> "Spicy tacos")
     const formattedName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
 
-    // Case-insensitive check in Supabase
+    // 1. Check if it exists (Case-Insensitive)
     const { data: existing } = await _supabase
         .from('meals')
         .select('name')
-        .ilike('name', formattedName) // 'ilike' is the Postgres case-insensitive operator
+        .ilike('name', formattedName)
         .maybeSingle();
 
+    let finalName = formattedName;
+
+    // 2. If it doesn't exist, Create it and WAIT for completion
     if (!existing) {
-        // Only insert if it doesn't exist in any case format
-        await _supabase.from('meals').insert({ name: formattedName });
+        const { error: insertError } = await _supabase
+            .from('meals')
+            .insert({ name: formattedName });
+        
+        if (insertError) {
+            console.error("Error saving new meal:", insertError);
+            return;
+        }
+    } else {
+        // Use the exact casing already in the database
+        finalName = existing.name;
     }
 
-    // Use the existing name format if found, otherwise use our new one
-    const finalName = existing ? existing.name : formattedName;
-
-    await _supabase.from('calendar').upsert({ 
+    // 3. Now save to the calendar
+    const { error: upsertError } = await _supabase.from('calendar').upsert({ 
         date: activePickerDate, 
         meal_name: finalName 
     });
 
-    closePicker();
-    renderMeals();
+    if (upsertError) {
+        console.error("Error saving to calendar:", upsertError);
+    } else {
+        closePicker();
+        renderMeals();
+    }
 };
 
 async function deleteEntry(dateStr) {
