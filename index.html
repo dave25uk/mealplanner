@@ -29,6 +29,16 @@
         </nav>
     </div>
 
+    <div id="picker-modal" class="modal">
+        <div class="modal-content picker-view">
+            <div class="modal-header">
+                <h3 id="picker-date-label">Select Meal</h3>
+                <button onclick="closePicker()" class="close-modal-btn grey">Cancel</button>
+            </div>
+            <div id="meal-selection-list"></div>
+        </div>
+    </div>
+
     <div id="meal-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -38,8 +48,6 @@
             <div id="meal-list-edit"></div>
         </div>
     </div>
-
-    <datalist id="meal-options"></datalist>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="app.js"></script>
