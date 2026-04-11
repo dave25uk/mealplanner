@@ -140,7 +140,12 @@ window.selectMeal = async (name) => {
     let rawName = name.trim();
     if (!rawName) return;
 
-    const formattedName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+    // Capitalize the first letter of EVERY word
+    const formattedName = rawName
+        .toLowerCase()
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
 
     // 1. Check if it exists (Case-Insensitive)
     const { data: existing } = await _supabase
@@ -151,7 +156,7 @@ window.selectMeal = async (name) => {
 
     let finalName = formattedName;
 
-    // 2. If it doesn't exist, Create it and WAIT for completion
+    // 2. If it doesn't exist, Create it
     if (!existing) {
         const { error: insertError } = await _supabase
             .from('meals')
@@ -166,7 +171,7 @@ window.selectMeal = async (name) => {
         finalName = existing.name;
     }
 
-    // 3. Now save to the calendar
+    // 3. Save to the calendar
     const { error: upsertError } = await _supabase.from('calendar').upsert({ 
         date: activePickerDate, 
         meal_name: finalName 
