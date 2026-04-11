@@ -2,26 +2,43 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Dinner Plan</title>
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css" />
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <link rel="apple-touch-icon" href="icon-192.png">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body>
-    <header>
-        <button id="prevWeek">←</button>
-        <h2 id="viewTitle">Dinner Plan</h2>
-        <button id="nextWeek">→</button>
-    </header>
+    <div class="app-container">
+        <header>
+            <div id="month-label">April</div>
+            <div class="date-strip" id="date-strip"></div>
+        </header>
 
-    <div id="calendar-container"></div>
+        <main class="swiper">
+            <div class="swiper-wrapper" id="calendar-wrapper">
+                </div>
+        </main>
+
+        <nav class="bottom-nav">
+            <button onclick="openMealEditor()">Edit Meal List</button>
+        </nav>
+    </div>
+
+    <div id="meal-modal" class="modal">
+        <div class="modal-content">
+            <h3>Manage Meals</h3>
+            <div id="meal-list-edit"></div>
+            <button onclick="closeMealEditor()">Close</button>
+        </div>
+    </div>
 
     <datalist id="meal-options"></datalist>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
