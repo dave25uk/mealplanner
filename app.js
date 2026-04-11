@@ -136,23 +136,31 @@ async function openPicker(dateStr, readableDate) {
     };
 }
 
-window.selectMeal = async (name) => {
-    const formattedName = name.trim();
-    if (!formattedName) return;
+wwindow.selectMeal = async (name) => {
+    let rawName = name.trim();
+    if (!rawName) return;
 
+    // Convert to Sentence case (e.g., "spicy tacos" -> "Spicy tacos")
+    const formattedName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+
+    // Case-insensitive check in Supabase
     const { data: existing } = await _supabase
         .from('meals')
         .select('name')
-        .eq('name', formattedName)
+        .ilike('name', formattedName) // 'ilike' is the Postgres case-insensitive operator
         .maybeSingle();
 
     if (!existing) {
+        // Only insert if it doesn't exist in any case format
         await _supabase.from('meals').insert({ name: formattedName });
     }
 
+    // Use the existing name format if found, otherwise use our new one
+    const finalName = existing ? existing.name : formattedName;
+
     await _supabase.from('calendar').upsert({ 
         date: activePickerDate, 
-        meal_name: formattedName 
+        meal_name: finalName 
     });
 
     closePicker();
