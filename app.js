@@ -1,93 +1,101 @@
 const supabaseUrl = 'https://qysscushyrhgrodlpovg.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5c3NjdXNoeXJoZ3JvZGxwb3ZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4MjE3NzEsImV4cCI6MjA5MTM5Nzc3MX0.1KMpTrpzmi6d-r3nbPzGunpiYHkAjpUxuB32RtAlJqI';
-const _supabase = supabase.createClient(supabaseUrl, supabaseKey);
+const _supabase = supabase.createClient(URL, KEY);
 
-let startDate = new Date();
+let currentWeekStart = new Date();
+// Set to previous Monday
+currentWeekStart.setDate(currentWeekStart.getDate() - (currentWeekStart.getDay() || 7) + 1);
+
+const swiper = new Swiper('.swiper', {
+    loop: false,
+    on: {
+        slideNextTransitionEnd: () => moveWeek(7),
+        slidePrevTransitionEnd: () => moveWeek(-7),
+    }
+});
 
 async function init() {
-    await updateMealDatalist();
-    renderWeek();
-    
-    document.getElementById('prevWeek').onclick = () => { 
-        startDate.setDate(startDate.getDate() - 7); 
-        renderWeek(); 
-    };
-    document.getElementById('nextWeek').onclick = () => { 
-        startDate.setDate(startDate.getDate() + 7); 
-        renderWeek(); 
-    };
+    renderUI();
+    updateMealDatalist();
 }
 
-async function updateMealDatalist() {
-    const { data } = await _supabase.from('meals').select('name');
-    const list = document.getElementById('meal-options');
-    if (data) {
-        list.innerHTML = data.map(m => `<option value="${m.name}">`).join('');
+function renderUI() {
+    renderHeader();
+    renderSlides();
+}
+
+function renderHeader() {
+    const monthLabel = document.getElementById('month-label');
+    const strip = document.getElementById('date-strip');
+    strip.innerHTML = '';
+    
+    monthLabel.innerText = currentWeekStart.toLocaleDateString('en-GB', { month: 'long' });
+
+    for (let i = 0; i < 7; i++) {
+        let d = new Date(currentWeekStart);
+        d.setDate(d.getDate() + i);
+        const day = d.getDay();
+        const isWeekend = (day === 0 || day === 6);
+        
+        strip.innerHTML += `
+            <div class="date-item ${isWeekend ? 'is-weekend' : ''}">
+                <div class="day-name">${d.toLocaleDateString('en-GB', { weekday: 'narrow' })}</div>
+                <div class="date-num">${d.getDate()}</div>
+            </div>
+        `;
     }
 }
 
-function renderWeek() {
-    const container = document.getElementById('calendar-container');
-    container.innerHTML = '';
-    
-    // Update the title to show the current range
-    const options = { month: 'short', day: 'numeric' };
-    document.getElementById('viewTitle').innerText = startDate.toLocaleDateString('en-GB', options);
+async function renderSlides() {
+    const wrapper = document.getElementById('calendar-wrapper');
+    wrapper.innerHTML = '<div class="swiper-slide" id="current-week"></div>';
+    const container = document.getElementById('current-week');
 
     for (let i = 0; i < 7; i++) {
-        let d = new Date(startDate);
+        let d = new Date(currentWeekStart);
         d.setDate(d.getDate() + i);
         const dateStr = d.toISOString().split('T')[0];
-        
+
         const card = document.createElement('div');
         card.className = 'date-card';
         card.innerHTML = `
-            <label>${d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}</label>
-            <div style="display: flex; align-items: center;">
-                <input type="text" list="meal-options" data-date="${dateStr}" placeholder="What's for dinner?" autocomplete="off">
-                <button class="clear-btn" style="background:none; border:none; color:#ccc; font-size:20px; padding:0 5px;">×</button>
-            </div>
+            <label style="font-size:12px; color:#8e8e93; text-transform:uppercase;">${d.toLocaleDateString('en-GB', { weekday: 'long' })}</label>
+            <input type="text" list="meal-options" data-date="${dateStr}" placeholder="Tap to plan...">
         `;
         container.appendChild(card);
-        
-        const input = card.querySelector('input');
-        const clearBtn = card.querySelector('.clear-btn');
-
-        // Fetch existing data
-        fetchEntry(dateStr, input);
-
-        // iOS FIX: Refresh datalist on focus
-        input.onfocus = () => updateMealDatalist();
-
-        // Keyboard FIX: Blur on Enter to force save
-        input.onkeyup = (e) => { if (e.key === 'Enter') input.blur(); };
-
-        // Save and Delete Logic
-        input.onchange = async (e) => {
-            const val = e.target.value.trim();
-            
-            if (val === "") {
-                // DELETE logic
-                await _supabase.from('calendar').delete().eq('date', dateStr);
-            } else {
-                // SAVE logic
-                await _supabase.from('meals').upsert({ name: val }, { onConflict: 'name' });
-                await _supabase.from('calendar').upsert({ date: dateStr, meal_name: val });
-                updateMealDatalist();
-            }
-        };
-
-        // Clear button logic
-        clearBtn.onclick = () => {
-            input.value = "";
-            input.onchange({ target: input }); 
-        };
+        fetchEntry(dateStr, card.querySelector('input'));
     }
 }
 
-async function fetchEntry(date, input) {
-    const { data } = await _supabase.from('calendar').select('meal_name').eq('date', date).maybeSingle();
-    if (data) input.value = data.meal_name;
+async function moveWeek(days) {
+    currentWeekStart.setDate(currentWeekStart.getDate() + days);
+    renderUI();
+    swiper.slideTo(0, 0); // Reset slide position silently
 }
+
+// MEAL EDITOR LOGIC
+async function openMealEditor() {
+    document.getElementById('meal-modal').style.display = 'block';
+    const { data } = await _supabase.from('meals').select('*').order('name');
+    const listDiv = document.getElementById('meal-list-edit');
+    listDiv.innerHTML = data.map(m => `
+        <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+            <span>${m.name}</span>
+            <button onclick="deleteMeal('${m.name}')" style="color:red; border:none; background:none;">Delete</button>
+        </div>
+    `).join('');
+}
+
+async function deleteMeal(name) {
+    if(confirm(`Delete "${name}" from your master list?`)) {
+        await _supabase.from('meals').delete().eq('name', name);
+        openMealEditor();
+        updateMealDatalist();
+    }
+}
+
+function closeMealEditor() { document.getElementById('meal-modal').style.display = 'none'; }
+
+// Reuse your existing fetchEntry and updateMealDatalist functions here...
 
 init();
