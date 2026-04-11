@@ -2,17 +2,8 @@ const supabaseUrl = 'https://qysscushyrhgrodlpovg.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5c3NjdXNoeXJoZ3JvZGxwb3ZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4MjE3NzEsImV4cCI6MjA5MTM5Nzc3MX0.1KMpTrpzmi6d-r3nbPzGunpiYHkAjpUxuB32RtAlJqI';
 const _supabase = supabase.createClient(supabaseUrl, supabaseKey);
 
-let currentWeekStart = new Date();
-// Set to previous Monday
-currentWeekStart.setDate(currentWeekStart.getDate() - (currentWeekStart.getDay() || 7) + 1);
-
-const swiper = new Swiper('.swiper', {
-    loop: false,
-    on: {
-        slideNextTransitionEnd: () => moveWeek(7),
-        slidePrevTransitionEnd: () => moveWeek(-7),
-    }
-});
+let today = new Date();
+let currentViewDate = new Date(); // Tracks the start of the visible 7 days
 
 async function init() {
     renderUI();
@@ -21,22 +12,18 @@ async function init() {
 
 function renderUI() {
     renderHeader();
-    renderSlides();
+    renderMeals();
 }
 
 function renderHeader() {
-    const monthLabel = document.getElementById('month-label');
+    document.getElementById('month-label').innerText = currentViewDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
     const strip = document.getElementById('date-strip');
     strip.innerHTML = '';
-    
-    monthLabel.innerText = currentWeekStart.toLocaleDateString('en-GB', { month: 'long' });
 
     for (let i = 0; i < 7; i++) {
-        let d = new Date(currentWeekStart);
+        let d = new Date(currentViewDate);
         d.setDate(d.getDate() + i);
-        const day = d.getDay();
-        const isWeekend = (day === 0 || day === 6);
-        
+        const isWeekend = (d.getDay() === 0 || d.getDay() === 6);
         strip.innerHTML += `
             <div class="date-item ${isWeekend ? 'is-weekend' : ''}">
                 <div class="day-name">${d.toLocaleDateString('en-GB', { weekday: 'narrow' })}</div>
@@ -46,56 +33,66 @@ function renderHeader() {
     }
 }
 
-async function renderSlides() {
-    const wrapper = document.getElementById('calendar-wrapper');
-    wrapper.innerHTML = '<div class="swiper-slide" id="current-week"></div>';
-    const container = document.getElementById('current-week');
+async function renderMeals() {
+    const container = document.getElementById('calendar-wrapper');
+    container.innerHTML = ''; // Clear for re-render
+    
+    const weekPage = document.createElement('div');
+    weekPage.className = 'week-page';
 
     for (let i = 0; i < 7; i++) {
-        let d = new Date(currentWeekStart);
+        let d = new Date(currentViewDate);
         d.setDate(d.getDate() + i);
         const dateStr = d.toISOString().split('T')[0];
 
         const card = document.createElement('div');
         card.className = 'date-card';
         card.innerHTML = `
-            <label style="font-size:12px; color:#8e8e93; text-transform:uppercase;">${d.toLocaleDateString('en-GB', { weekday: 'long' })}</label>
-            <input type="text" list="meal-options" data-date="${dateStr}" placeholder="Tap to plan...">
+            <div class="card-header">
+                <span class="card-label">${d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' })}</span>
+                <button class="clear-btn">×</button>
+            </div>
+            <input type="text" list="meal-options" placeholder="Plan dinner..." autocomplete="off">
         `;
-        container.appendChild(card);
-        fetchEntry(dateStr, card.querySelector('input'));
+        
+        const input = card.querySelector('input');
+        const clearBtn = card.querySelector('.clear-btn');
+
+        // Load existing meal
+        const { data } = await _supabase.from('calendar').select('meal_name').eq('date', dateStr).maybeSingle();
+        if (data) input.value = data.meal_name;
+
+        // Save/Delete Logic
+        input.onchange = async () => {
+            const val = input.value.trim();
+            if (val === "") {
+                await _supabase.from('calendar').delete().eq('date', dateStr);
+            } else {
+                await _supabase.from('meals').upsert({ name: val }, { onConflict: 'name' });
+                await _supabase.from('calendar').upsert({ date: dateStr, meal_name: val });
+                updateMealDatalist();
+            }
+        };
+
+        input.onfocus = () => updateMealDatalist();
+        clearBtn.onclick = () => { input.value = ""; input.onchange(); };
+        
+        weekPage.appendChild(card);
+    }
+    container.appendChild(weekPage);
+}
+
+async function updateMealDatalist() {
+    const { data } = await _supabase.from('meals').select('name');
+    if (data) {
+        document.getElementById('meal-options').innerHTML = data.map(m => `<option value="${m.name}">`).join('');
     }
 }
 
-async function moveWeek(days) {
-    currentWeekStart.setDate(currentWeekStart.getDate() + days);
+// Simple Nav buttons for swiping (Instead of complex Swiper library)
+window.moveWeek = (days) => {
+    currentViewDate.setDate(currentViewDate.getDate() + days);
     renderUI();
-    swiper.slideTo(0, 0); // Reset slide position silently
-}
-
-// MEAL EDITOR LOGIC
-async function openMealEditor() {
-    document.getElementById('meal-modal').style.display = 'block';
-    const { data } = await _supabase.from('meals').select('*').order('name');
-    const listDiv = document.getElementById('meal-list-edit');
-    listDiv.innerHTML = data.map(m => `
-        <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
-            <span>${m.name}</span>
-            <button onclick="deleteMeal('${m.name}')" style="color:red; border:none; background:none;">Delete</button>
-        </div>
-    `).join('');
-}
-
-async function deleteMeal(name) {
-    if(confirm(`Delete "${name}" from your master list?`)) {
-        await _supabase.from('meals').delete().eq('name', name);
-        openMealEditor();
-        updateMealDatalist();
-    }
-}
-
-function closeMealEditor() { document.getElementById('meal-modal').style.display = 'none'; }
-
-// Reuse your existing fetchEntry and updateMealDatalist functions here...
+};
 
 init();
