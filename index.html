@@ -6,39 +6,48 @@
     <title>Dinner Plan</title>
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css" />
+    
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <link rel="apple-touch-icon" href="icon-192.png">
 </head>
 <body>
+
     <div class="app-container">
         <header>
-            <div id="month-label">April</div>
-            <div class="date-strip" id="date-strip"></div>
+            <div id="month-label">April 2026</div>
+            <div class="date-strip" id="date-strip">
+                </div>
         </header>
 
-        <main class="swiper">
-            <div class="swiper-wrapper" id="calendar-wrapper">
+        <main id="calendar-container">
+            <div id="calendar-wrapper">
                 </div>
         </main>
 
         <nav class="bottom-nav">
-            <button onclick="openMealEditor()">Edit Meal List</button>
+            <div class="week-controls">
+                <button onclick="moveWeek(-7)">← Prev Week</button>
+                <button onclick="moveWeek(7)">Next Week →</button>
+            </div>
+            <button class="manage-btn" onclick="openMealEditor()">Manage Master Meal List</button>
         </nav>
     </div>
 
     <div id="meal-modal" class="modal">
         <div class="modal-content">
-            <h3>Manage Meals</h3>
-            <div id="meal-list-edit"></div>
-            <button onclick="closeMealEditor()">Close</button>
+            <header class="modal-header">
+                <h3>Manage Meals</h3>
+                <button onclick="closeMealEditor()" class="close-modal-btn">Done</button>
+            </header>
+            <div id="meal-list-edit">
+                </div>
         </div>
     </div>
 
     <datalist id="meal-options"></datalist>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
