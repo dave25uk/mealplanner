@@ -97,16 +97,64 @@ async function renderMeals() {
 
 async function openPicker(dateStr, readableDate) {
     activePickerDate = dateStr;
+    const modal = document.getElementById('picker-modal');
+    const input = document.getElementById('meal-search-input');
+    const list = document.getElementById('meal-selection-list');
+    
     document.getElementById('picker-date-label').innerText = readableDate;
-    document.getElementById('picker-modal').style.display = 'block';
-    const { data } = await _supabase.from('meals').select('name').order('name');
-    document.getElementById('meal-selection-list').innerHTML = data.map(m => `
-        <div class="picker-item" onclick="selectMeal('${m.name.replace(/'/g, "\\'")}')">${m.name}</div>
-    `).join('');
+    input.value = '';
+    modal.style.display = 'block';
+    input.focus();
+
+    const { data: allMeals } = await _supabase.from('meals').select('name').order('name');
+
+    const renderFilteredList = (filter = '') => {
+        const filtered = allMeals.filter(m => 
+            m.name.toLowerCase().includes(filter.toLowerCase())
+        );
+
+        list.innerHTML = filtered.map(m => `
+            <div class="picker-item" onclick="selectMeal('${m.name.replace(/'/g, "\\'")}')">${m.name}</div>
+        `).join('');
+
+        if (filter.trim() !== '' && !allMeals.some(m => m.name.toLowerCase() === filter.toLowerCase())) {
+            list.innerHTML = `
+                <div class="picker-item" style="color: var(--accent); font-weight: 600;" onclick="selectMeal('${filter.replace(/'/g, "\\'")}')">
+                    + Add "${filter}"
+                </div>
+            ` + list.innerHTML;
+        }
+    };
+
+    input.oninput = (e) => renderFilteredList(e.target.value);
+    renderFilteredList(); 
+
+    input.onkeydown = (e) => {
+        if (e.key === 'Enter' && input.value.trim() !== '') {
+            selectMeal(input.value.trim());
+        }
+    };
 }
 
 window.selectMeal = async (name) => {
-    await _supabase.from('calendar').upsert({ date: activePickerDate, meal_name: name });
+    const formattedName = name.trim();
+    if (!formattedName) return;
+
+    const { data: existing } = await _supabase
+        .from('meals')
+        .select('name')
+        .eq('name', formattedName)
+        .maybeSingle();
+
+    if (!existing) {
+        await _supabase.from('meals').insert({ name: formattedName });
+    }
+
+    await _supabase.from('calendar').upsert({ 
+        date: activePickerDate, 
+        meal_name: formattedName 
+    });
+
     closePicker();
     renderMeals();
 };

@@ -29,15 +29,19 @@
         </nav>
     </div>
 
-    <div id="picker-modal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3 id="picker-date-label">Select Meal</h3>
-                <button onclick="closePicker()" class="close-modal-btn grey">Cancel</button>
-            </div>
-            <div id="meal-selection-list"></div>
+<div id="picker-modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="picker-date-label">Select Meal</h3>
+            <button onclick="closePicker()" class="close-modal-btn grey">Cancel</button>
         </div>
+        <div style="margin-bottom: 20px;">
+            <input type="text" id="meal-search-input" placeholder="Enter meal name..." 
+                   style="width: 100%; padding: 14px; border: 1px solid #ddd; border-radius: 12px; font-size: 17px;">
+        </div>
+        <div id="meal-selection-list"></div>
     </div>
+</div>
 
     <div id="meal-modal" class="modal">
         <div class="modal-content">
