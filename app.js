@@ -9,13 +9,25 @@ let activePickerDate = null;
 
 async function init() {
     renderUI();
+    
     const gestureArea = document.getElementById('calendar-container');
-    gestureArea.addEventListener('touchstart', e => { touchstartX = e.changedTouches[0].screenX; }, {passive: true});
+    
+    gestureArea.addEventListener('touchstart', e => { 
+        touchstartX = e.changedTouches[0].screenX; 
+    }, {passive: true});
+    
     gestureArea.addEventListener('touchend', e => { 
         touchendX = e.changedTouches[0].screenX; 
         if (touchendX < touchstartX - 70) moveWeek(7);
         if (touchendX > touchstartX + 70) moveWeek(-7);
     }, {passive: true});
+
+    document.addEventListener('touchmove', function (e) {
+        if (e.target.closest('.modal-content') || e.target.closest('#calendar-container')) {
+            return;
+        }
+        e.preventDefault();
+    }, { passive: false });
 }
 
 window.moveWeek = (days) => {
