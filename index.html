@@ -13,26 +13,24 @@
 </head>
 <body>
 
-    <div class="app-container">
-        <header>
+<div class="app-container">
+    <header>
+        <div class="header-top">
+            <button class="nav-arrow" onclick="moveWeek(-7)">‹</button>
             <div id="month-label">April 2026</div>
-            <div class="date-strip" id="date-strip">
-                </div>
-        </header>
+            <button class="nav-arrow" onclick="moveWeek(7)">›</button>
+        </div>
+        <div class="date-strip" id="date-strip"></div>
+    </header>
 
-        <main id="calendar-container">
-            <div id="calendar-wrapper">
-                </div>
-        </main>
+    <main id="calendar-container">
+        <div id="calendar-wrapper"></div>
+    </main>
 
-        <nav class="bottom-nav">
-            <div class="week-controls">
-                <button onclick="moveWeek(-7)">← Prev Week</button>
-                <button onclick="moveWeek(7)">Next Week →</button>
-            </div>
-            <button class="manage-btn" onclick="openMealEditor()">Manage Master Meal List</button>
-        </nav>
-    </div>
+    <nav class="bottom-nav">
+        <button class="manage-btn" onclick="openMealEditor()">Manage Master Meal List</button>
+    </nav>
+</div>
 
     <div id="meal-modal" class="modal">
         <div class="modal-content">
