@@ -77,7 +77,7 @@ main {
 .bottom-nav {
     position: absolute;
     /* Negative bottom margin forces the container to 'sink' lower */
-    bottom: -5px; 
+    bottom: -15px; 
     left: 0;
     right: 0;
     background: var(--card);
