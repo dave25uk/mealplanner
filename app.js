@@ -4,10 +4,25 @@ const _supabase = supabase.createClient(supabaseUrl, supabaseKey);
 
 let today = new Date();
 let currentViewDate = new Date(); // Tracks the start of the visible 7 days
+let touchstartX = 0;
+let touchendX = 0;
+
+function checkDirection() {
+    if (touchendX < touchstartX - 70) moveWeek(7); // Swipe Left -> Next Week
+    if (touchendX > touchstartX + 70) moveWeek(-7); // Swipe Right -> Prev Week
+}
 
 async function init() {
     renderUI();
     updateMealDatalist();
+
+    // Add Swipe Listeners to the main area
+    const gestureArea = document.getElementById('calendar-container');
+    gestureArea.addEventListener('touchstart', e => { touchstartX = e.changedTouches[0].screenX; });
+    gestureArea.addEventListener('touchend', e => { 
+        touchendX = e.changedTouches[0].screenX; 
+        checkDirection(); 
+    });
 }
 
 function renderUI() {
@@ -23,7 +38,10 @@ function renderHeader() {
     for (let i = 0; i < 7; i++) {
         let d = new Date(currentViewDate);
         d.setDate(d.getDate() + i);
-        const isWeekend = (d.getDay() === 0 || d.getDay() === 6);
+        const day = d.getDay();
+        // 0 is Sunday, 6 is Saturday
+        const isWeekend = (day === 0 || day === 6);
+        
         strip.innerHTML += `
             <div class="date-item ${isWeekend ? 'is-weekend' : ''}">
                 <div class="day-name">${d.toLocaleDateString('en-GB', { weekday: 'narrow' })}</div>
