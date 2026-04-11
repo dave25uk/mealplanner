@@ -82,7 +82,7 @@ main {
     background: var(--card);
     border-top: 1px solid var(--border);
     /* Removed env() and set manual 15px bottom padding */
-    padding: 10px 20px 15px; 
+    padding: 10px 20px 0px; 
 }
 
 .manage-btn {
