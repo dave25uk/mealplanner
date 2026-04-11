@@ -76,13 +76,16 @@ main {
 
 .bottom-nav {
     position: absolute;
-    bottom: 0;
+    /* Negative bottom margin forces the container to 'sink' lower */
+    bottom: -5px; 
     left: 0;
     right: 0;
     background: var(--card);
     border-top: 1px solid var(--border);
-    /* Removed env() and set manual 15px bottom padding */
-    padding: 10px 20px 0px; 
+    /* We use a tiny bit of padding-bottom just so the button 
+       doesn't touch the very edge of the glass */
+    padding: 10px 20px 10px; 
+    z-index: 20;
 }
 
 .manage-btn {
@@ -94,4 +97,6 @@ main {
     border-radius: 12px;
     font-weight: 700; 
     font-size: 16px;
+    /* This ensures no extra space is added under the button itself */
+    margin-bottom: 0; 
 }
