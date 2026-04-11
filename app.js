@@ -9,29 +9,18 @@ let activePickerDate = null;
 
 async function init() {
     renderUI();
-    
-    // Explicitly target the container for swipes
     const gestureArea = document.getElementById('calendar-container');
-    gestureArea.addEventListener('touchstart', e => { 
-        touchstartX = e.changedTouches[0].screenX; 
-    }, {passive: true});
-    
+    gestureArea.addEventListener('touchstart', e => { touchstartX = e.changedTouches[0].screenX; }, {passive: true});
     gestureArea.addEventListener('touchend', e => { 
         touchendX = e.changedTouches[0].screenX; 
-        handleGesture();
+        if (touchendX < touchstartX - 70) moveWeek(7);
+        if (touchendX > touchstartX + 70) moveWeek(-7);
     }, {passive: true});
 }
 
-function handleGesture() {
-    if (touchendX < touchstartX - 70) moveWeek(7);
-    if (touchendX > touchstartX + 70) moveWeek(-7);
-}
-
-// Make globally accessible for the HTML buttons
 window.moveWeek = (days) => {
     currentViewDate.setDate(currentViewDate.getDate() + days);
     renderUI();
-    document.getElementById('calendar-container').scrollTop = 0;
 };
 
 function renderUI() {
@@ -58,7 +47,7 @@ function renderHeader() {
 
 async function renderMeals() {
     const wrapper = document.getElementById('calendar-wrapper');
-    wrapper.innerHTML = '<div style="text-align:center; padding:20px; color:#8e8e93;">Loading...</div>';
+    wrapper.innerHTML = '';
 
     let dStart = new Date(currentViewDate);
     let dEnd = new Date(currentViewDate);
@@ -69,7 +58,6 @@ async function renderMeals() {
         .gte('date', dStart.toISOString().split('T')[0])
         .lte('date', dEnd.toISOString().split('T')[0]);
 
-    wrapper.innerHTML = '';
     for (let i = 0; i < 7; i++) {
         let d = new Date(currentViewDate);
         d.setDate(d.getDate() + i);
@@ -99,10 +87,10 @@ async function openPicker(dateStr, readableDate) {
     activePickerDate = dateStr;
     document.getElementById('picker-date-label').innerText = readableDate;
     document.getElementById('picker-modal').style.display = 'block';
-    
     const { data } = await _supabase.from('meals').select('name').order('name');
-    const list = document.getElementById('meal-selection-list');
-    list.innerHTML = data.map(m => `<div class="picker-item" onclick="selectMeal('${m.name.replace(/'/g, "\\'")}')">${m.name}</div>`).join('');
+    document.getElementById('meal-selection-list').innerHTML = data.map(m => `
+        <div class="picker-item" onclick="selectMeal('${m.name.replace(/'/g, "\\'")}')">${m.name}</div>
+    `).join('');
 }
 
 window.selectMeal = async (name) => {
@@ -116,22 +104,19 @@ async function deleteEntry(dateStr) {
     renderMeals();
 }
 
-window.closePicker = () => {
-    document.getElementById('picker-modal').style.display = 'none';
-    activePickerDate = null;
-};
+window.closePicker = () => { document.getElementById('picker-modal').style.display = 'none'; };
 
 window.openMealEditor = async () => {
     document.getElementById('meal-modal').style.display = 'block';
     const { data } = await _supabase.from('meals').select('*').order('name');
     const container = document.getElementById('meal-list-edit');
     container.innerHTML = `
-        <div style="display:flex; gap:10px; margin-bottom:20px;">
-            <input type="text" id="new-meal-input" placeholder="New meal name..." style="flex-grow:1; padding:12px; border:1px solid #ddd; border-radius:8px;">
-            <button onclick="addNewMeal()" style="background:var(--accent); color:white; border:none; padding:12px 20px; border-radius:8px; font-weight:600;">Add</button>
+        <div style="display:flex; gap:10px; margin-bottom:15px;">
+            <input type="text" id="new-meal-input" placeholder="New meal..." style="flex-grow:1; padding:10px; border:1px solid #ddd; border-radius:8px;">
+            <button onclick="addNewMeal()" style="background:var(--accent); color:white; border:none; padding:10px; border-radius:8px; font-weight:600;">Add</button>
         </div>
     ` + data.map(m => `
-        <div style="display:flex; justify-content:space-between; padding:15px 0; border-bottom:1px solid #eee; align-items:center;">
+        <div style="display:flex; justify-content:space-between; padding:12px 0; border-bottom:1px solid #eee; align-items:center;">
             <span>${m.name}</span>
             <button onclick="deleteFromMaster('${m.name.replace(/'/g, "\\'")}')" style="color:#ff3b30; border:none; background:none; font-weight:600;">Delete</button>
         </div>
