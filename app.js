@@ -104,7 +104,6 @@ window.moveWeek = (days) => {
 
 async function openMealEditor() {
     document.getElementById('meal-modal').style.display = 'block';
-    document.body.style.overflow = 'hidden';
     const { data } = await _supabase.from('meals').select('*').order('name');
     document.getElementById('meal-list-edit').innerHTML = data.map(m => `
         <div style="display:flex; justify-content:space-between; padding: 15px 0; border-bottom: 1px solid #eee; align-items:center;">
@@ -123,7 +122,6 @@ async function deleteMeal(name) {
 
 window.closeMealEditor = () => { 
     document.getElementById('meal-modal').style.display = 'none'; 
-    document.body.style.overflow = 'auto';
 };
 
 init();
