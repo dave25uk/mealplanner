@@ -112,8 +112,11 @@ window.selectMeal = async (name) => {
 };
 
 async function deleteEntry(dateStr) {
-    await _supabase.from('calendar').delete().eq('date', dateStr);
-    renderMeals();
+    // Added confirmation dialog
+    if (confirm("Are you sure you want to remove this meal from the calendar?")) {
+        await _supabase.from('calendar').delete().eq('date', dateStr);
+        renderMeals();
+    }
 }
 
 window.closePicker = () => { document.getElementById('picker-modal').style.display = 'none'; };
