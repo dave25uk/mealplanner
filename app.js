@@ -136,7 +136,7 @@ async function openPicker(dateStr, readableDate) {
     };
 }
 
-wwindow.selectMeal = async (name) => {
+window.selectMeal = async (name) => {
     let rawName = name.trim();
     if (!rawName) return;
 
