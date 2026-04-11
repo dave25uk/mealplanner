@@ -11,14 +11,13 @@ async function init() {
     updateMealDatalist();
 
     const gestureArea = document.getElementById('calendar-container');
-    gestureArea.addEventListener('touchstart', e => { touchstartX = e.changedTouches[0].screenX; });
+    gestureArea.addEventListener('touchstart', e => { touchstartX = e.changedTouches[0].screenX; }, {passive: true});
     gestureArea.addEventListener('touchend', e => { 
         touchendX = e.changedTouches[0].screenX; 
         if (touchendX < touchstartX - 70) moveWeek(7);
         if (touchendX > touchstartX + 70) moveWeek(-7);
-    });
+    }, {passive: true});
 
-    // Detect keyboard to hide footer
     window.addEventListener('focusin', (e) => {
         if (e.target.tagName === 'INPUT') document.body.classList.add('keyboard-open');
     });
@@ -107,9 +106,9 @@ async function openMealEditor() {
     document.getElementById('meal-modal').style.display = 'block';
     const { data } = await _supabase.from('meals').select('*').order('name');
     document.getElementById('meal-list-edit').innerHTML = data.map(m => `
-        <div style="display:flex; justify-content:space-between; padding: 10px 0; border-bottom: 1px solid #eee;">
+        <div style="display:flex; justify-content:space-between; padding: 12px 0; border-bottom: 1px solid #eee; align-items:center;">
             <span>${m.name}</span>
-            <button onclick="deleteMeal('${m.name}')" style="color:red; border:none; background:none;">Delete</button>
+            <button onclick="deleteMeal('${m.name}')" style="color:#ff3b30; border:none; background:none; font-weight:600;">Delete</button>
         </div>
     `).join('');
 }
