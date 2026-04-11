@@ -104,11 +104,12 @@ window.moveWeek = (days) => {
 
 async function openMealEditor() {
     document.getElementById('meal-modal').style.display = 'block';
+    document.body.style.overflow = 'hidden';
     const { data } = await _supabase.from('meals').select('*').order('name');
     document.getElementById('meal-list-edit').innerHTML = data.map(m => `
-        <div style="display:flex; justify-content:space-between; padding: 12px 0; border-bottom: 1px solid #eee; align-items:center;">
-            <span>${m.name}</span>
-            <button onclick="deleteMeal('${m.name}')" style="color:#ff3b30; border:none; background:none; font-weight:600;">Delete</button>
+        <div style="display:flex; justify-content:space-between; padding: 15px 0; border-bottom: 1px solid #eee; align-items:center;">
+            <span style="font-size: 17px;">${m.name}</span>
+            <button onclick="deleteMeal('${m.name}')" style="color:#ff3b30; border:none; background:none; font-weight:600; font-size:15px;">Delete</button>
         </div>
     `).join('');
 }
@@ -120,6 +121,9 @@ async function deleteMeal(name) {
     }
 }
 
-window.closeMealEditor = () => { document.getElementById('meal-modal').style.display = 'none'; };
+window.closeMealEditor = () => { 
+    document.getElementById('meal-modal').style.display = 'none'; 
+    document.body.style.overflow = 'auto';
+};
 
 init();
