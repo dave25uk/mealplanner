@@ -5,18 +5,34 @@ const _supabase = supabase.createClient(supabaseUrl, supabaseKey);
 let currentViewDate = new Date();
 let touchstartX = 0;
 let touchendX = 0;
-let activePickerDate = null; // Tracks which day we are currently planning
+let activePickerDate = null;
 
 async function init() {
     renderUI();
+    
+    // Explicitly target the container for swipes
     const gestureArea = document.getElementById('calendar-container');
-    gestureArea.addEventListener('touchstart', e => { touchstartX = e.changedTouches[0].screenX; }, {passive: true});
+    gestureArea.addEventListener('touchstart', e => { 
+        touchstartX = e.changedTouches[0].screenX; 
+    }, {passive: true});
+    
     gestureArea.addEventListener('touchend', e => { 
         touchendX = e.changedTouches[0].screenX; 
-        if (touchendX < touchstartX - 70) moveWeek(7);
-        if (touchendX > touchstartX + 70) moveWeek(-7);
+        handleGesture();
     }, {passive: true});
 }
+
+function handleGesture() {
+    if (touchendX < touchstartX - 70) moveWeek(7);
+    if (touchendX > touchstartX + 70) moveWeek(-7);
+}
+
+// Make globally accessible for the HTML buttons
+window.moveWeek = (days) => {
+    currentViewDate.setDate(currentViewDate.getDate() + days);
+    renderUI();
+    document.getElementById('calendar-container').scrollTop = 0;
+};
 
 function renderUI() {
     renderHeader();
@@ -42,12 +58,23 @@ function renderHeader() {
 
 async function renderMeals() {
     const wrapper = document.getElementById('calendar-wrapper');
-    wrapper.innerHTML = '';
+    wrapper.innerHTML = '<div style="text-align:center; padding:20px; color:#8e8e93;">Loading...</div>';
 
+    let dStart = new Date(currentViewDate);
+    let dEnd = new Date(currentViewDate);
+    dEnd.setDate(dEnd.getDate() + 6);
+
+    const { data: savedMeals } = await _supabase.from('calendar')
+        .select('date, meal_name')
+        .gte('date', dStart.toISOString().split('T')[0])
+        .lte('date', dEnd.toISOString().split('T')[0]);
+
+    wrapper.innerHTML = '';
     for (let i = 0; i < 7; i++) {
         let d = new Date(currentViewDate);
         d.setDate(d.getDate() + i);
         const dateStr = d.toISOString().split('T')[0];
+        const mealEntry = savedMeals?.find(m => m.date === dateStr);
 
         const card = document.createElement('div');
         card.className = 'date-card';
@@ -56,23 +83,14 @@ async function renderMeals() {
                 <span class="card-label">${d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' })}</span>
                 <button class="clear-btn">×</button>
             </div>
-            <div class="meal-display empty" id="display-${dateStr}">Plan dinner...</div>
+            <div class="meal-display ${!mealEntry ? 'empty' : ''}">${mealEntry ? mealEntry.meal_name : 'Plan dinner...'}</div>
         `;
         
         const display = card.querySelector('.meal-display');
         const clearBtn = card.querySelector('.clear-btn');
 
-        const { data } = await _supabase.from('calendar').select('meal_name').eq('date', dateStr).maybeSingle();
-        if (data && data.meal_name) {
-            display.innerText = data.meal_name;
-            display.classList.remove('empty');
-        }
-
         display.onclick = () => openPicker(dateStr, d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' }));
-        clearBtn.onclick = (e) => { 
-            e.stopPropagation(); 
-            deleteEntry(dateStr); 
-        };
+        clearBtn.onclick = (e) => { e.stopPropagation(); deleteEntry(dateStr); };
         wrapper.appendChild(card);
     }
 }
@@ -84,46 +102,43 @@ async function openPicker(dateStr, readableDate) {
     
     const { data } = await _supabase.from('meals').select('name').order('name');
     const list = document.getElementById('meal-selection-list');
-    list.innerHTML = data.map(m => `
-        <div class="picker-item" onclick="selectMeal('${m.name}')">${m.name}</div>
-    `).join('');
+    list.innerHTML = data.map(m => `<div class="picker-item" onclick="selectMeal('${m.name.replace(/'/g, "\\'")}')">${m.name}</div>`).join('');
 }
 
-async function selectMeal(name) {
+window.selectMeal = async (name) => {
     await _supabase.from('calendar').upsert({ date: activePickerDate, meal_name: name });
     closePicker();
     renderMeals();
-}
+};
 
 async function deleteEntry(dateStr) {
     await _supabase.from('calendar').delete().eq('date', dateStr);
     renderMeals();
 }
 
-function closePicker() {
+window.closePicker = () => {
     document.getElementById('picker-modal').style.display = 'none';
     activePickerDate = null;
-}
+};
 
-// Master List Management
-async function openMealEditor() {
+window.openMealEditor = async () => {
     document.getElementById('meal-modal').style.display = 'block';
     const { data } = await _supabase.from('meals').select('*').order('name');
-    document.getElementById('meal-list-edit').innerHTML = `
-        <div style="margin-bottom: 20px;">
-            <input type="text" id="new-meal-input" placeholder="Add new meal..." 
-                   style="border: 1px solid #ccc; border-radius: 8px; padding: 10px; width: calc(100% - 60px);">
-            <button onclick="addNewMeal()" style="padding: 10px; border-radius: 8px; background: var(--accent); color:white; border:none;">Add</button>
+    const container = document.getElementById('meal-list-edit');
+    container.innerHTML = `
+        <div style="display:flex; gap:10px; margin-bottom:20px;">
+            <input type="text" id="new-meal-input" placeholder="New meal name..." style="flex-grow:1; padding:12px; border:1px solid #ddd; border-radius:8px;">
+            <button onclick="addNewMeal()" style="background:var(--accent); color:white; border:none; padding:12px 20px; border-radius:8px; font-weight:600;">Add</button>
         </div>
     ` + data.map(m => `
-        <div style="display:flex; justify-content:space-between; padding: 15px 0; border-bottom: 1px solid #eee; align-items:center;">
+        <div style="display:flex; justify-content:space-between; padding:15px 0; border-bottom:1px solid #eee; align-items:center;">
             <span>${m.name}</span>
-            <button onclick="deleteFromMaster('${m.name}')" style="color:red; border:none; background:none; font-weight:600;">Delete</button>
+            <button onclick="deleteFromMaster('${m.name.replace(/'/g, "\\'")}')" style="color:#ff3b30; border:none; background:none; font-weight:600;">Delete</button>
         </div>
     `).join('');
-}
+};
 
-async function addNewMeal() {
+window.addNewMeal = async () => {
     const input = document.getElementById('new-meal-input');
     const name = input.value.trim();
     if (name) {
@@ -131,17 +146,15 @@ async function addNewMeal() {
         input.value = '';
         openMealEditor();
     }
-}
+};
 
-async function deleteFromMaster(name) {
-    if(confirm(`Remove "${name}" from master list?`)) {
+window.deleteFromMaster = async (name) => {
+    if(confirm(`Delete "${name}"?`)) {
         await _supabase.from('meals').delete().eq('name', name);
         openMealEditor();
     }
-}
+};
 
-function closeMealEditor() {
-    document.getElementById('meal-modal').style.display = 'none';
-}
+window.closeMealEditor = () => { document.getElementById('meal-modal').style.display = 'none'; };
 
 init();
