@@ -60,6 +60,9 @@ main {
     padding: 8px 12px; 
     border-radius: 10px;
     box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    /* Ensure the cards are explicitly clickable */
+    position: relative;
+    z-index: 2;
 }
 
 .card-header { display: flex; justify-content: space-between; align-items: center; }
@@ -76,16 +79,15 @@ main {
 
 .bottom-nav {
     position: absolute;
-    /* Negative bottom margin forces the container to 'sink' lower */
     bottom: -10px; 
     left: 0;
     right: 0;
     background: var(--card);
     border-top: 1px solid var(--border);
-    /* We use a tiny bit of padding-bottom just so the button 
-       doesn't touch the very edge of the glass */
-    padding: 10px 20px 10px; 
-    z-index: 20;
+    padding: 10px 20px 20px; 
+    /* Keeps the button accessible but prevents it from blocking 
+       clicks to the cards above it */
+    z-index: 10; 
 }
 
 .manage-btn {
