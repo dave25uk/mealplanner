@@ -67,7 +67,6 @@ header {
 .is-today .day-name { color: var(--accent); font-weight: 700; }
 .is-today .date-num { background: var(--accent); color: #fff; font-weight: 700; }
 
-/* main + wrapper now flex columns so the cards can fill the space */
 main {
     flex: 1 1 auto;
     overflow-y: auto;
@@ -85,9 +84,6 @@ main {
 }
 
 .date-card {
-    /* flex: 1 1 0 => all 7 cards share the height evenly.
-       Default min-height: auto still lets a card grow if its
-       content (e.g. a wrapped meal name) needs more room. */
     flex: 1 1 0;
     display: flex;
     flex-direction: column;
@@ -132,10 +128,24 @@ main {
     border-top: 1px solid var(--border);
     padding: 8px 20px calc(8px + env(safe-area-inset-bottom));
     z-index: 100;
+    display: flex;
+    gap: 10px;
+}
+
+.secondary-btn {
+    flex: 1;
+    background: #e5e5ea;
+    color: var(--accent);
+    border: none;
+    padding: 12px;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 16px;
+    cursor: pointer;
 }
 
 .manage-btn {
-    width: 100%;
+    flex: 1;
     background: var(--accent);
     color: white;
     border: none;
@@ -198,6 +208,49 @@ main {
 .editor-delete {
     color: var(--danger); border: none; background: none;
     font-weight: 600; font-size: 15px; cursor: pointer;
+}
+
+/* Popular meals */
+.popular-subtitle {
+    font-size: 13px;
+    color: #8e8e93;
+    margin: -10px 0 15px;
+}
+.popular-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid #eee;
+}
+.popular-rank {
+    flex: 0 0 auto;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: #f2f2f7;
+    color: #8e8e93;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700;
+    font-size: 13px;
+}
+.popular-rank.top { background: var(--accent); color: #fff; }
+.popular-name {
+    flex: 1;
+    font-size: 16px;
+    font-weight: 500;
+    color: #000;
+}
+.popular-count {
+    flex: 0 0 auto;
+    color: #8e8e93;
+    font-weight: 600;
+    font-size: 15px;
+}
+.popular-empty {
+    text-align: center;
+    color: #8e8e93;
+    padding: 40px 0;
+    font-style: italic;
 }
 
 .toast {

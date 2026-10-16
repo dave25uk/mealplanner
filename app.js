@@ -40,7 +40,7 @@ function showToast(message, isError = false) {
     }
     el.textContent = message;
     el.classList.toggle('error', isError);
-    void el.offsetWidth; // restart transition
+    void el.offsetWidth;
     el.classList.add('show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
@@ -139,17 +139,15 @@ function setMealsCache(m) { localStorage.setItem(MEALS_CACHE_KEY, JSON.stringify
 async function init() {
     currentViewDate.setHours(0, 0, 0, 0);
 
-    // Nav arrows
     document.querySelectorAll('.nav-arrow').forEach(btn => {
         btn.addEventListener('click', () => {
             moveWeek(btn.dataset.dir === 'prev' ? -7 : 7);
         });
     });
 
-    // Edit Meals
     document.getElementById('manage-meals-btn').addEventListener('click', openMealEditor);
+    document.getElementById('popular-btn').addEventListener('click', openPopular);
 
-    // Modal close buttons
     document.querySelectorAll('[data-close]').forEach(btn => {
         btn.addEventListener('click', () => {
             document.getElementById(btn.dataset.close).style.display = 'none';
@@ -157,7 +155,6 @@ async function init() {
         });
     });
 
-    // Swipe on calendar
     const gestureArea = document.getElementById('calendar-container');
     gestureArea.addEventListener('touchstart', e => {
         touchstartX = e.changedTouches[0].screenX;
@@ -169,7 +166,6 @@ async function init() {
         if (suppressClick) setTimeout(() => { suppressClick = false; }, 350);
     }, { passive: true });
 
-    // Card clicks (delegated)
     document.getElementById('calendar-wrapper').addEventListener('click', e => {
         if (suppressClick) return;
         const card = e.target.closest('.date-card');
@@ -185,7 +181,6 @@ async function init() {
         }
     });
 
-    // Picker items (delegated)
     document.getElementById('meal-selection-list').addEventListener('click', e => {
         const item = e.target.closest('.picker-item');
         if (!item) return;
@@ -193,7 +188,6 @@ async function init() {
         if (name) selectMeal(name);
     });
 
-    // Meal editor items (delegated)
     document.getElementById('meal-list-edit').addEventListener('click', e => {
         if (e.target.id === 'add-meal-btn') {
             addNewMeal();
@@ -202,13 +196,11 @@ async function init() {
         }
     });
 
-    // Prevent rubber-banding outside scroll areas
     document.addEventListener('touchmove', e => {
         if (e.target.closest('.modal-content') || e.target.closest('#calendar-container')) return;
         e.preventDefault();
     }, { passive: false });
 
-    // Register service worker
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
             navigator.serviceWorker.register('./sw.js').catch(err => {
@@ -293,7 +285,6 @@ async function renderMeals() {
         } else {
             savedMeals = data || [];
             const newCache = { ...cache };
-            // Wipe this week from cache, then re-populate with what we got back
             for (let i = 0; i < 7; i++) {
                 const d = new Date(currentViewDate);
                 d.setDate(d.getDate() + i);
@@ -311,7 +302,6 @@ async function renderMeals() {
         }
     }
 
-    // Overlay any pending offline calendar mutations
     const pending = {};
     for (const op of getQueue()) {
         const date = op.payload.date;
@@ -396,7 +386,6 @@ async function openPicker(dateStr, readableDate) {
         allMeals = getMealsCache();
     }
 
-    // Overlay queued offline mutations
     for (const op of getQueue()) {
         if (op.type === 'insert-meal') {
             if (!allMeals.some(m => m.name.toLowerCase() === op.payload.name.toLowerCase())) {
@@ -478,7 +467,6 @@ async function selectMeal(name) {
             return;
         }
 
-        // Clear any queued ops for this date (both upserts and deletes)
         removeFromQueue({ type: 'upsert-calendar', payload: { date: activePickerDate } });
     } else {
         enqueue({ type: 'insert-meal', payload: { name: formattedName } });
@@ -542,7 +530,6 @@ async function openMealEditor() {
         if (meals.length === 0) showToast('Offline — no cached meals');
     }
 
-    // Overlay queued offline mutations
     for (const op of getQueue()) {
         if (op.type === 'insert-meal') {
             if (!meals.some(m => m.name.toLowerCase() === op.payload.name.toLowerCase())) {
@@ -633,6 +620,100 @@ async function deleteFromMaster(name) {
 
     openMealEditor();
     renderMeals();
+}
+
+// ---------------- Popular meals ----------------
+
+async function openPopular() {
+    const modal = document.getElementById('popular-modal');
+    const container = document.getElementById('popular-list');
+    modal.style.display = 'block';
+    container.innerHTML = '<div class="popular-empty">Loading…</div>';
+
+    if (!navigator.onLine) {
+        container.innerHTML = '<div class="popular-empty">You\'re offline — connect to see this.</div>';
+        return;
+    }
+
+    // Last 60 days, inclusive of today
+    const dStart = new Date();
+    dStart.setHours(0, 0, 0, 0);
+    dStart.setDate(dStart.getDate() - 59);
+    const startISO = toLocalISO(dStart);
+    const endISO = todayISO();
+
+    const { data, error } = await _supabase
+        .from('calendar')
+        .select('date, meal_name')
+        .gte('date', startISO)
+        .lte('date', endISO);
+
+    if (error) {
+        showToast('Could not load popular meals', true);
+        container.innerHTML = '<div class="popular-empty">Could not load.</div>';
+        return;
+    }
+
+    // Dates overridden by queued offline upserts (so we don't double-count)
+    const queuedDates = new Map();
+    for (const op of getQueue()) {
+        if (op.type === 'upsert-calendar') {
+            const date = op.payload.date;
+            if (date >= startISO && date <= endISO) {
+                queuedDates.set(date, op.payload.meal_name);
+            }
+        }
+    }
+
+    const counts = {};
+    for (const row of data || []) {
+        if (queuedDates.has(row.date)) continue;
+        counts[row.meal_name] = (counts[row.meal_name] || 0) + 1;
+    }
+    for (const mealName of queuedDates.values()) {
+        counts[mealName] = (counts[mealName] || 0) + 1;
+    }
+
+    const ranked = Object.entries(counts)
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+
+    const totalDays = (data?.length || 0) + queuedDates.size;
+    const totalMeals = ranked.length;
+
+    container.innerHTML = '';
+
+    if (ranked.length === 0) {
+        container.innerHTML = '<div class="popular-empty">No meals planned in the last 60 days.</div>';
+        return;
+    }
+
+    const subtitle = document.createElement('div');
+    subtitle.className = 'popular-subtitle';
+    subtitle.textContent = `${totalMeals} distinct meal${totalMeals === 1 ? '' : 's'} across ${totalDays} planned day${totalDays === 1 ? '' : 's'}`;
+    container.appendChild(subtitle);
+
+    ranked.forEach((entry, i) => {
+        const row = document.createElement('div');
+        row.className = 'popular-row';
+
+        const rank = document.createElement('div');
+        rank.className = 'popular-rank' + (i < 3 ? ' top' : '');
+        rank.textContent = i + 1;
+
+        const name = document.createElement('div');
+        name.className = 'popular-name';
+        name.textContent = entry.name;
+
+        const count = document.createElement('div');
+        count.className = 'popular-count';
+        count.textContent = entry.count + '×';
+
+        row.appendChild(rank);
+        row.appendChild(name);
+        row.appendChild(count);
+        container.appendChild(row);
+    });
 }
 
 // ---------------- Go ----------------
