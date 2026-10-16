@@ -5,35 +5,228 @@ const _supabase = supabase.createClient(supabaseUrl, supabaseKey);
 let currentViewDate = new Date();
 let touchstartX = 0;
 let touchendX = 0;
+let suppressClick = false;
 let activePickerDate = null;
 
-async function init() {
-    renderUI();
-    
-    const gestureArea = document.getElementById('calendar-container');
-    
-    gestureArea.addEventListener('touchstart', e => { 
-        touchstartX = e.changedTouches[0].screenX; 
-    }, {passive: true});
-    
-    gestureArea.addEventListener('touchend', e => { 
-        touchendX = e.changedTouches[0].screenX; 
-        if (touchendX < touchstartX - 70) moveWeek(7);
-        if (touchendX > touchstartX + 70) moveWeek(-7);
-    }, {passive: true});
+// ---------------- Utilities ----------------
 
-    document.addEventListener('touchmove', function (e) {
-        if (e.target.closest('.modal-content') || e.target.closest('#calendar-container')) {
-            return;
-        }
-        e.preventDefault();
-    }, { passive: false });
+function toLocalISO(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-window.moveWeek = (days) => {
+function parseLocalISO(s) {
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(y, m - 1, d);
+}
+
+function todayISO() { return toLocalISO(new Date()); }
+
+function formatMealName(raw) {
+    return raw.trim().toLowerCase().split(/\s+/)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
+}
+
+// ---------------- Toast ----------------
+
+let toastTimer;
+function showToast(message, isError = false) {
+    let el = document.getElementById('toast');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'toast';
+        el.className = 'toast';
+        document.body.appendChild(el);
+    }
+    el.textContent = message;
+    el.classList.toggle('error', isError);
+    void el.offsetWidth; // restart transition
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+// ---------------- Offline queue ----------------
+
+const QUEUE_KEY = 'mealPlannerQueue';
+
+function getQueue() {
+    try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); }
+    catch { return []; }
+}
+
+function setQueue(q) { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); }
+
+function opKey(op) {
+    if (op.type === 'upsert-calendar' || op.type === 'delete-calendar') {
+        return 'calendar::' + op.payload.date;
+    }
+    if (op.type === 'insert-meal' || op.type === 'delete-meal') {
+        return 'meal::' + (op.payload.name || '').toLowerCase();
+    }
+    if (op.type === 'delete-calendar-by-meal') {
+        return 'calendar-by-meal::' + (op.payload.meal_name || '').toLowerCase();
+    }
+    return JSON.stringify(op);
+}
+
+function enqueue(op) {
+    const q = getQueue().filter(o => opKey(o) !== opKey(op));
+    q.push(op);
+    setQueue(q);
+}
+
+function removeFromQueue(op) {
+    setQueue(getQueue().filter(o => opKey(o) !== opKey(op)));
+}
+
+async function flushQueue() {
+    if (!navigator.onLine) return;
+    const q = getQueue();
+    if (q.length === 0) return;
+
+    const remaining = [];
+    for (const op of q) {
+        try {
+            let error = null;
+            if (op.type === 'upsert-calendar') {
+                ({ error } = await _supabase.from('calendar').upsert(op.payload));
+            } else if (op.type === 'delete-calendar') {
+                ({ error } = await _supabase.from('calendar').delete().eq('date', op.payload.date));
+            } else if (op.type === 'delete-calendar-by-meal') {
+                ({ error } = await _supabase.from('calendar').delete().eq('meal_name', op.payload.meal_name));
+            } else if (op.type === 'insert-meal') {
+                ({ error } = await _supabase.from('meals').insert(op.payload));
+                if (error && error.code === '23505') error = null;
+            } else if (op.type === 'delete-meal') {
+                ({ error } = await _supabase.from('meals').delete().eq('name', op.payload.name));
+            }
+            if (error) throw error;
+        } catch (e) {
+            console.warn('Queue flush failed for', op, e);
+            remaining.push(op);
+        }
+    }
+    setQueue(remaining);
+
+    if (remaining.length === 0 && q.length > 0) {
+        showToast('Synced offline changes');
+        renderMeals();
+    }
+}
+
+window.addEventListener('online', flushQueue);
+
+// ---------------- Local caches ----------------
+
+const CACHE_KEY = 'mealPlannerCache';
+const MEALS_CACHE_KEY = 'mealPlannerMeals';
+
+function getCache() {
+    try { return JSON.parse(localStorage.getItem(CACHE_KEY) || '{}'); }
+    catch { return {}; }
+}
+function setCache(c) { localStorage.setItem(CACHE_KEY, JSON.stringify(c)); }
+
+function getMealsCache() {
+    try { return JSON.parse(localStorage.getItem(MEALS_CACHE_KEY) || '[]'); }
+    catch { return []; }
+}
+function setMealsCache(m) { localStorage.setItem(MEALS_CACHE_KEY, JSON.stringify(m)); }
+
+// ---------------- Init ----------------
+
+async function init() {
+    currentViewDate.setHours(0, 0, 0, 0);
+
+    // Nav arrows
+    document.querySelectorAll('.nav-arrow').forEach(btn => {
+        btn.addEventListener('click', () => {
+            moveWeek(btn.dataset.dir === 'prev' ? -7 : 7);
+        });
+    });
+
+    // Edit Meals
+    document.getElementById('manage-meals-btn').addEventListener('click', openMealEditor);
+
+    // Modal close buttons
+    document.querySelectorAll('[data-close]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.getElementById(btn.dataset.close).style.display = 'none';
+            if (btn.dataset.close === 'picker-modal') activePickerDate = null;
+        });
+    });
+
+    // Swipe on calendar
+    const gestureArea = document.getElementById('calendar-container');
+    gestureArea.addEventListener('touchstart', e => {
+        touchstartX = e.changedTouches[0].screenX;
+    }, { passive: true });
+    gestureArea.addEventListener('touchend', e => {
+        touchendX = e.changedTouches[0].screenX;
+        if (touchendX < touchstartX - 70) { suppressClick = true; moveWeek(7); }
+        if (touchendX > touchstartX + 70) { suppressClick = true; moveWeek(-7); }
+        if (suppressClick) setTimeout(() => { suppressClick = false; }, 350);
+    }, { passive: true });
+
+    // Card clicks (delegated)
+    document.getElementById('calendar-wrapper').addEventListener('click', e => {
+        if (suppressClick) return;
+        const card = e.target.closest('.date-card');
+        if (!card) return;
+        const dateStr = card.dataset.date;
+        if (e.target.dataset.action === 'clear') {
+            deleteEntry(dateStr);
+        } else if (e.target.dataset.action === 'pick') {
+            openPicker(
+                dateStr,
+                parseLocalISO(dateStr).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' })
+            );
+        }
+    });
+
+    // Picker items (delegated)
+    document.getElementById('meal-selection-list').addEventListener('click', e => {
+        const item = e.target.closest('.picker-item');
+        if (!item) return;
+        const name = item.dataset.newMeal || item.dataset.meal;
+        if (name) selectMeal(name);
+    });
+
+    // Meal editor items (delegated)
+    document.getElementById('meal-list-edit').addEventListener('click', e => {
+        if (e.target.id === 'add-meal-btn') {
+            addNewMeal();
+        } else if (e.target.classList.contains('editor-delete')) {
+            deleteFromMaster(e.target.dataset.meal);
+        }
+    });
+
+    // Prevent rubber-banding outside scroll areas
+    document.addEventListener('touchmove', e => {
+        if (e.target.closest('.modal-content') || e.target.closest('#calendar-container')) return;
+        e.preventDefault();
+    }, { passive: false });
+
+    // Register service worker
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('./sw.js').catch(err => {
+                console.warn('Service worker registration failed:', err);
+            });
+        });
+    }
+
+    renderUI();
+    flushQueue();
+}
+
+// ---------------- Navigation ----------------
+
+function moveWeek(days) {
     currentViewDate.setDate(currentViewDate.getDate() + days);
     renderUI();
-};
+}
 
 function renderUI() {
     renderHeader();
@@ -41,194 +234,407 @@ function renderUI() {
 }
 
 function renderHeader() {
-    document.getElementById('month-label').innerText = currentViewDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    document.getElementById('month-label').innerText =
+        currentViewDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+
     const strip = document.getElementById('date-strip');
     strip.innerHTML = '';
+    const today = todayISO();
+
     for (let i = 0; i < 7; i++) {
-        let d = new Date(currentViewDate);
+        const d = new Date(currentViewDate);
         d.setDate(d.getDate() + i);
+        const dateStr = toLocalISO(d);
         const isWeekend = (d.getDay() === 0 || d.getDay() === 6);
-        strip.innerHTML += `
-            <div class="date-item ${isWeekend ? 'is-weekend' : ''}">
-                <div class="day-name">${d.toLocaleDateString('en-GB', { weekday: 'narrow' })}</div>
-                <div class="date-num">${d.getDate()}</div>
-            </div>
-        `;
+        const isToday = dateStr === today;
+
+        const el = document.createElement('div');
+        el.className = 'date-item' +
+            (isWeekend ? ' is-weekend' : '') +
+            (isToday ? ' is-today' : '');
+
+        const nameEl = document.createElement('div');
+        nameEl.className = 'day-name';
+        nameEl.textContent = d.toLocaleDateString('en-GB', { weekday: 'narrow' });
+
+        const numEl = document.createElement('div');
+        numEl.className = 'date-num';
+        numEl.textContent = d.getDate();
+
+        el.appendChild(nameEl);
+        el.appendChild(numEl);
+        strip.appendChild(el);
     }
 }
+
+// ---------------- Meal list ----------------
 
 async function renderMeals() {
     const wrapper = document.getElementById('calendar-wrapper');
     wrapper.innerHTML = '';
 
-    let dStart = new Date(currentViewDate);
-    let dEnd = new Date(currentViewDate);
+    const dStart = new Date(currentViewDate);
+    const dEnd = new Date(currentViewDate);
     dEnd.setDate(dEnd.getDate() + 6);
+    const startISO = toLocalISO(dStart);
+    const endISO = toLocalISO(dEnd);
 
-    const { data: savedMeals } = await _supabase.from('calendar')
-        .select('date, meal_name')
-        .gte('date', dStart.toISOString().split('T')[0])
-        .lte('date', dEnd.toISOString().split('T')[0]);
+    let savedMeals = [];
+    const cache = getCache();
+
+    if (navigator.onLine) {
+        const { data, error } = await _supabase.from('calendar')
+            .select('date, meal_name')
+            .gte('date', startISO)
+            .lte('date', endISO);
+
+        if (error) {
+            showToast('Could not load meals', true);
+        } else {
+            savedMeals = data || [];
+            const newCache = { ...cache };
+            // Wipe this week from cache, then re-populate with what we got back
+            for (let i = 0; i < 7; i++) {
+                const d = new Date(currentViewDate);
+                d.setDate(d.getDate() + i);
+                delete newCache[toLocalISO(d)];
+            }
+            for (const m of savedMeals) newCache[m.date] = m.meal_name;
+            setCache(newCache);
+        }
+    } else {
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(currentViewDate);
+            d.setDate(d.getDate() + i);
+            const k = toLocalISO(d);
+            if (cache[k]) savedMeals.push({ date: k, meal_name: cache[k] });
+        }
+    }
+
+    // Overlay any pending offline calendar mutations
+    const pending = {};
+    for (const op of getQueue()) {
+        const date = op.payload.date;
+        if (!date || date < startISO || date > endISO) continue;
+        if (op.type === 'upsert-calendar') pending[date] = op.payload.meal_name;
+        else if (op.type === 'delete-calendar') pending[date] = null;
+    }
+
+    const today = todayISO();
 
     for (let i = 0; i < 7; i++) {
-        let d = new Date(currentViewDate);
+        const d = new Date(currentViewDate);
         d.setDate(d.getDate() + i);
-        const dateStr = d.toISOString().split('T')[0];
-        const mealEntry = savedMeals?.find(m => m.date === dateStr);
+        const dateStr = toLocalISO(d);
 
+        let mealName;
+        if (dateStr in pending) {
+            mealName = pending[dateStr];
+        } else {
+            const entry = savedMeals.find(m => m.date === dateStr);
+            mealName = entry ? entry.meal_name : null;
+        }
+
+        const isToday = dateStr === today;
         const card = document.createElement('div');
-        card.className = 'date-card';
-        card.innerHTML = `
-            <div class="card-header">
-                <span class="card-label">${d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' })}</span>
-                <button class="clear-btn">×</button>
-            </div>
-            <div class="meal-display ${!mealEntry ? 'empty' : ''}">${mealEntry ? mealEntry.meal_name : 'Plan dinner...'}</div>
-        `;
-        
-        const display = card.querySelector('.meal-display');
-        const clearBtn = card.querySelector('.clear-btn');
+        card.className = 'date-card' + (isToday ? ' is-today' : '');
+        card.dataset.date = dateStr;
 
-        display.onclick = () => openPicker(dateStr, d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' }));
-        clearBtn.onclick = (e) => { e.stopPropagation(); deleteEntry(dateStr); };
+        const header = document.createElement('div');
+        header.className = 'card-header';
+
+        const label = document.createElement('span');
+        label.className = 'card-label';
+        label.textContent = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' })
+            + (isToday ? ' · Today' : '');
+
+        const clearBtn = document.createElement('button');
+        clearBtn.className = 'clear-btn';
+        clearBtn.dataset.action = 'clear';
+        clearBtn.setAttribute('aria-label', 'Clear meal');
+        clearBtn.textContent = '×';
+
+        header.appendChild(label);
+        header.appendChild(clearBtn);
+
+        const display = document.createElement('div');
+        display.className = 'meal-display' + (mealName ? '' : ' empty');
+        display.dataset.action = 'pick';
+        display.textContent = mealName || 'Plan dinner...';
+
+        card.appendChild(header);
+        card.appendChild(display);
         wrapper.appendChild(card);
     }
 }
+
+// ---------------- Picker ----------------
 
 async function openPicker(dateStr, readableDate) {
     activePickerDate = dateStr;
     const modal = document.getElementById('picker-modal');
     const input = document.getElementById('meal-search-input');
     const list = document.getElementById('meal-selection-list');
-    
+
     document.getElementById('picker-date-label').innerText = readableDate;
     input.value = '';
     modal.style.display = 'block';
-    input.focus();
+    setTimeout(() => input.focus(), 50);
 
-    const { data: allMeals } = await _supabase.from('meals').select('name').order('name');
+    let allMeals = [];
+
+    if (navigator.onLine) {
+        const { data, error } = await _supabase.from('meals').select('name').order('name');
+        if (error) {
+            showToast('Could not load meal list', true);
+            allMeals = getMealsCache();
+        } else {
+            allMeals = data || [];
+            setMealsCache(allMeals);
+        }
+    } else {
+        allMeals = getMealsCache();
+    }
+
+    // Overlay queued offline mutations
+    for (const op of getQueue()) {
+        if (op.type === 'insert-meal') {
+            if (!allMeals.some(m => m.name.toLowerCase() === op.payload.name.toLowerCase())) {
+                allMeals.push({ name: op.payload.name });
+            }
+        } else if (op.type === 'delete-meal') {
+            allMeals = allMeals.filter(m => m.name.toLowerCase() !== op.payload.name.toLowerCase());
+        }
+    }
 
     const renderFilteredList = (filter = '') => {
-        const filtered = allMeals.filter(m => 
-            m.name.toLowerCase().includes(filter.toLowerCase())
-        );
+        list.innerHTML = '';
+        const trimmed = filter.trim();
+        const lower = trimmed.toLowerCase();
+        const filtered = allMeals.filter(m => m.name.toLowerCase().includes(lower));
 
-        list.innerHTML = filtered.map(m => `
-            <div class="picker-item" onclick="selectMeal('${m.name.replace(/'/g, "\\'")}')">${m.name}</div>
-        `).join('');
+        if (trimmed !== '' && !allMeals.some(m => m.name.toLowerCase() === lower)) {
+            const add = document.createElement('div');
+            add.className = 'picker-item add-new';
+            add.dataset.newMeal = trimmed;
+            add.textContent = `+ Add "${trimmed}"`;
+            list.appendChild(add);
+        }
 
-        if (filter.trim() !== '' && !allMeals.some(m => m.name.toLowerCase() === filter.toLowerCase())) {
-            list.innerHTML = `
-                <div class="picker-item" style="color: var(--accent); font-weight: 600;" onclick="selectMeal('${filter.replace(/'/g, "\\'")}')">
-                    + Add "${filter}"
-                </div>
-            ` + list.innerHTML;
+        for (const m of filtered) {
+            const el = document.createElement('div');
+            el.className = 'picker-item';
+            el.dataset.meal = m.name;
+            el.textContent = m.name;
+            list.appendChild(el);
         }
     };
 
-    input.oninput = (e) => renderFilteredList(e.target.value);
-    renderFilteredList(); 
-
-    input.onkeydown = (e) => {
+    input.oninput = e => renderFilteredList(e.target.value);
+    input.onkeydown = e => {
         if (e.key === 'Enter' && input.value.trim() !== '') {
             selectMeal(input.value.trim());
         }
     };
+    renderFilteredList();
 }
 
-window.selectMeal = async (name) => {
-    let rawName = name.trim();
+async function selectMeal(name) {
+    const rawName = name.trim();
     if (!rawName) return;
 
-    // Capitalize the first letter of EVERY word
-    const formattedName = rawName
-        .toLowerCase()
-        .split(' ')
-        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-        .join(' ');
-
-    // 1. Check if it exists (Case-Insensitive)
-    const { data: existing } = await _supabase
-        .from('meals')
-        .select('name')
-        .ilike('name', formattedName)
-        .maybeSingle();
-
+    const formattedName = formatMealName(rawName);
     let finalName = formattedName;
 
-    // 2. If it doesn't exist, Create it
-    if (!existing) {
-        const { error: insertError } = await _supabase
+    if (navigator.onLine) {
+        const { data: existing, error: lookupError } = await _supabase
             .from('meals')
-            .insert({ name: formattedName });
-        
-        if (insertError) {
-            console.error("Error saving new meal:", insertError);
+            .select('name')
+            .ilike('name', formattedName)
+            .maybeSingle();
+
+        if (lookupError) {
+            showToast('Could not check meal list', true);
+        }
+
+        if (existing) {
+            finalName = existing.name;
+        } else {
+            const { error: insertError } = await _supabase
+                .from('meals')
+                .insert({ name: formattedName });
+            if (insertError && insertError.code !== '23505') {
+                showToast('Could not save meal', true);
+            }
+        }
+
+        const { error: upsertError } = await _supabase.from('calendar').upsert({
+            date: activePickerDate,
+            meal_name: finalName
+        });
+
+        if (upsertError) {
+            showToast('Could not save to calendar', true);
+            return;
+        }
+
+        // Clear any queued ops for this date (both upserts and deletes)
+        removeFromQueue({ type: 'upsert-calendar', payload: { date: activePickerDate } });
+    } else {
+        enqueue({ type: 'insert-meal', payload: { name: formattedName } });
+        enqueue({ type: 'upsert-calendar', payload: { date: activePickerDate, meal_name: finalName } });
+        showToast('Saved offline — will sync');
+    }
+
+    closePicker();
+    renderMeals();
+}
+
+function closePicker() {
+    document.getElementById('picker-modal').style.display = 'none';
+    activePickerDate = null;
+}
+
+// ---------------- Calendar delete ----------------
+
+async function deleteEntry(dateStr) {
+    if (!confirm('Are you sure you want to remove this meal from the calendar?')) return;
+
+    if (navigator.onLine) {
+        const { error } = await _supabase.from('calendar').delete().eq('date', dateStr);
+        if (error) {
+            showToast('Could not delete', true);
+            return;
+        }
+        removeFromQueue({ type: 'upsert-calendar', payload: { date: dateStr } });
+    } else {
+        enqueue({ type: 'delete-calendar', payload: { date: dateStr } });
+        showToast('Deleted offline — will sync');
+    }
+    renderMeals();
+}
+
+// ---------------- Master meal editor ----------------
+
+async function openMealEditor() {
+    document.getElementById('meal-modal').style.display = 'block';
+    const container = document.getElementById('meal-list-edit');
+    container.innerHTML = `
+        <div class="editor-add-row">
+            <input type="text" id="new-meal-input" placeholder="New meal..." class="editor-input">
+            <button id="add-meal-btn" class="editor-add-btn">Add</button>
+        </div>
+    `;
+
+    let meals = [];
+
+    if (navigator.onLine) {
+        const { data, error } = await _supabase.from('meals').select('*').order('name');
+        if (error) {
+            showToast('Could not load meals', true);
+            meals = getMealsCache();
+        } else {
+            meals = data || [];
+            setMealsCache(meals);
+        }
+    } else {
+        meals = getMealsCache();
+        if (meals.length === 0) showToast('Offline — no cached meals');
+    }
+
+    // Overlay queued offline mutations
+    for (const op of getQueue()) {
+        if (op.type === 'insert-meal') {
+            if (!meals.some(m => m.name.toLowerCase() === op.payload.name.toLowerCase())) {
+                meals.push({ name: op.payload.name });
+            }
+        } else if (op.type === 'delete-meal') {
+            meals = meals.filter(m => m.name.toLowerCase() !== op.payload.name.toLowerCase());
+        }
+    }
+    meals.sort((a, b) => a.name.localeCompare(b.name));
+
+    const listEl = document.createElement('div');
+    listEl.id = 'meal-list-items';
+
+    for (const m of meals) {
+        const row = document.createElement('div');
+        row.className = 'editor-row';
+
+        const span = document.createElement('span');
+        span.textContent = m.name;
+
+        const btn = document.createElement('button');
+        btn.className = 'editor-delete';
+        btn.dataset.meal = m.name;
+        btn.textContent = 'Delete';
+
+        row.appendChild(span);
+        row.appendChild(btn);
+        listEl.appendChild(row);
+    }
+
+    container.appendChild(listEl);
+}
+
+async function addNewMeal() {
+    const input = document.getElementById('new-meal-input');
+    const name = input.value.trim();
+    if (!name) return;
+
+    const formatted = formatMealName(name);
+
+    if (navigator.onLine) {
+        const { error } = await _supabase.from('meals').insert({ name: formatted });
+        if (error && error.code !== '23505') {
+            showToast('Could not add meal', true);
             return;
         }
     } else {
-        // Use the exact casing already in the database
-        finalName = existing.name;
+        enqueue({ type: 'insert-meal', payload: { name: formatted } });
+        showToast('Saved offline — will sync');
     }
 
-    // 3. Save to the calendar
-    const { error: upsertError } = await _supabase.from('calendar').upsert({ 
-        date: activePickerDate, 
-        meal_name: finalName 
-    });
-
-    if (upsertError) {
-        console.error("Error saving to calendar:", upsertError);
-    } else {
-        closePicker();
-        renderMeals();
-    }
-};
-
-async function deleteEntry(dateStr) {
-    // Added confirmation dialog
-    if (confirm("Are you sure you want to remove this meal from the calendar?")) {
-        await _supabase.from('calendar').delete().eq('date', dateStr);
-        renderMeals();
-    }
+    openMealEditor();
 }
 
-window.closePicker = () => { document.getElementById('picker-modal').style.display = 'none'; };
-
-window.openMealEditor = async () => {
-    document.getElementById('meal-modal').style.display = 'block';
-    const { data } = await _supabase.from('meals').select('*').order('name');
-    const container = document.getElementById('meal-list-edit');
-    container.innerHTML = `
-        <div style="display:flex; gap:10px; margin-bottom:15px;">
-            <input type="text" id="new-meal-input" placeholder="New meal..." style="flex-grow:1; padding:10px; border:1px solid #ddd; border-radius:8px;">
-            <button onclick="addNewMeal()" style="background:var(--accent); color:white; border:none; padding:10px; border-radius:8px; font-weight:600;">Add</button>
-        </div>
-    ` + data.map(m => `
-        <div style="display:flex; justify-content:space-between; padding:12px 0; border-bottom:1px solid #eee; align-items:center;">
-            <span>${m.name}</span>
-            <button onclick="deleteFromMaster('${m.name.replace(/'/g, "\\'")}')" style="color:#ff3b30; border:none; background:none; font-weight:600;">Delete</button>
-        </div>
-    `).join('');
-};
-
-window.addNewMeal = async () => {
-    const input = document.getElementById('new-meal-input');
-    const name = input.value.trim();
-    if (name) {
-        await _supabase.from('meals').upsert({ name: name });
-        input.value = '';
-        openMealEditor();
+async function deleteFromMaster(name) {
+    let count = 0;
+    if (navigator.onLine) {
+        const { count: c, error } = await _supabase
+            .from('calendar')
+            .select('*', { count: 'exact', head: true })
+            .eq('meal_name', name);
+        if (!error) count = c || 0;
     }
-};
 
-window.deleteFromMaster = async (name) => {
-    if(confirm(`Delete "${name}"?`)) {
-        await _supabase.from('meals').delete().eq('name', name);
-        openMealEditor();
+    const msg = count > 0
+        ? `Delete "${name}"?\n\nIt's used on ${count} calendar ${count === 1 ? 'day' : 'days'} — those will be cleared too.`
+        : `Delete "${name}"?`;
+
+    if (!confirm(msg)) return;
+
+    if (navigator.onLine) {
+        const { error: e1 } = await _supabase.from('calendar').delete().eq('meal_name', name);
+        if (e1) {
+            showToast('Could not remove calendar entries', true);
+            return;
+        }
+        const { error: e2 } = await _supabase.from('meals').delete().eq('name', name);
+        if (e2) {
+            showToast('Could not delete meal', true);
+            return;
+        }
+    } else {
+        enqueue({ type: 'delete-calendar-by-meal', payload: { meal_name: name } });
+        enqueue({ type: 'delete-meal', payload: { name } });
+        showToast('Deleted offline — will sync');
     }
-};
 
-window.closeMealEditor = () => { document.getElementById('meal-modal').style.display = 'none'; };
+    openMealEditor();
+    renderMeals();
+}
+
+// ---------------- Go ----------------
 
 init();

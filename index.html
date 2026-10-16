@@ -8,14 +8,15 @@
     <link rel="stylesheet" href="style.css">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#f2f2f7">
 </head>
 <body>
     <div class="app-container">
         <header>
             <div class="header-top">
-                <button class="nav-arrow" onclick="moveWeek(-7)">‹</button>
+                <button class="nav-arrow" data-dir="prev" aria-label="Previous week">‹</button>
                 <div id="month-label"></div>
-                <button class="nav-arrow" onclick="moveWeek(7)">›</button>
+                <button class="nav-arrow" data-dir="next" aria-label="Next week">›</button>
             </div>
             <div class="date-strip" id="date-strip"></div>
         </header>
@@ -25,33 +26,35 @@
         </main>
 
         <nav class="bottom-nav">
-            <button class="manage-btn" onclick="openMealEditor()">Edit Meals</button>
+            <button class="manage-btn" id="manage-meals-btn">Edit Meals</button>
         </nav>
     </div>
 
-<div id="picker-modal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3 id="picker-date-label">Select Meal</h3>
-            <button onclick="closePicker()" class="close-modal-btn grey">Cancel</button>
+    <div id="picker-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="picker-date-label">Select Meal</h3>
+                <button data-close="picker-modal" class="close-modal-btn grey">Cancel</button>
+            </div>
+            <div style="margin-bottom: 20px;">
+                <input type="text" id="meal-search-input" placeholder="Enter meal name..."
+                       style="width: 100%; padding: 14px; border: 1px solid #ddd; border-radius: 12px; font-size: 17px;">
+            </div>
+            <div id="meal-selection-list"></div>
         </div>
-        <div style="margin-bottom: 20px;">
-            <input type="text" id="meal-search-input" placeholder="Enter meal name..." 
-                   style="width: 100%; padding: 14px; border: 1px solid #ddd; border-radius: 12px; font-size: 17px;">
-        </div>
-        <div id="meal-selection-list"></div>
     </div>
-</div>
 
     <div id="meal-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Edit Meals</h3>
-                <button onclick="closeMealEditor()" class="close-modal-btn">Done</button>
+                <button data-close="meal-modal" class="close-modal-btn">Done</button>
             </div>
             <div id="meal-list-edit"></div>
         </div>
     </div>
+
+    <div id="toast" class="toast"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="app.js"></script>
