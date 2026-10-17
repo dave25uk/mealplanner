@@ -73,6 +73,17 @@
         </div>
     </div>
 
+    <div id="note-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="note-date-label">Note</h3>
+                <button data-close="note-modal" class="close-modal-btn">Done</button>
+            </div>
+            <textarea id="note-input" class="note-textarea" placeholder="Add a note (e.g. 'Defrost chicken')..."></textarea>
+            <button id="save-note-btn" class="manage-btn" style="margin-top: 15px;">Save Note</button>
+        </div>
+    </div>
+
     <div id="toast" class="toast"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>

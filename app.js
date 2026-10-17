@@ -7,6 +7,7 @@ let touchstartX = 0;
 let touchendX = 0;
 let suppressClick = false;
 let activePickerDate = null;
+let activeNoteDate = null;
 
 // ---------------- Utilities ----------------
 
@@ -91,6 +92,9 @@ function opKey(op) {
     if (op.type === 'upsert-calendar' || op.type === 'delete-calendar') {
         return 'calendar::' + op.payload.date;
     }
+    if (op.type === 'upsert-note') {
+        return 'note::' + op.payload.date;
+    }
     if (op.type === 'insert-meal' || op.type === 'delete-meal') {
         return 'meal::' + (op.payload.name || '').toLowerCase();
     }
@@ -120,6 +124,8 @@ async function flushQueue() {
                 ({ error } = await _supabase.from('calendar').upsert(op.payload));
             } else if (op.type === 'delete-calendar') {
                 ({ error } = await _supabase.from('calendar').delete().eq('date', op.payload.date));
+            } else if (op.type === 'upsert-note') {
+                ({ error } = await _supabase.from('calendar').update({ note: op.payload.note }).eq('date', op.payload.date));
             } else if (op.type === 'insert-meal') {
                 ({ error } = await _supabase.from('meals').insert(op.payload));
                 if (error && error.code === '23505') error = null;
@@ -148,7 +154,16 @@ const CACHE_KEY = 'mealPlannerCache';
 const MEALS_CACHE_KEY = 'mealPlannerMeals';
 
 function getCache() {
-    try { return JSON.parse(localStorage.getItem(CACHE_KEY) || '{}'); }
+    try {
+        const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
+        // Handle upgrade from old string-based cache to object-based
+        for (const key in cache) {
+            if (typeof cache[key] === 'string') {
+                cache[key] = { meal_name: cache[key], note: null };
+            }
+        }
+        return cache;
+    }
     catch { return {}; }
 }
 function setCache(c) { localStorage.setItem(CACHE_KEY, JSON.stringify(c)); }
@@ -194,6 +209,7 @@ async function init() {
     document.getElementById('manage-meals-btn').addEventListener('click', openMealEditor);
     document.getElementById('popular-btn').addEventListener('click', openPopular);
     document.getElementById('random-meal-btn').addEventListener('click', pickRandomMeal);
+    document.getElementById('save-note-btn').addEventListener('click', saveNote);
 
     document.getElementById('popular-range-selector').addEventListener('click', e => {
         const btn = e.target.closest('button');
@@ -206,6 +222,7 @@ async function init() {
         btn.addEventListener('click', () => {
             document.getElementById(btn.dataset.close).style.display = 'none';
             if (btn.dataset.close === 'picker-modal') activePickerDate = null;
+            if (btn.dataset.close === 'note-modal') activeNoteDate = null;
         });
     });
 
@@ -227,9 +244,11 @@ async function init() {
         if (!card) return;
         const dateStr = card.dataset.date;
 
-        if (e.target.dataset.action === 'clear') {
+        if (e.target.closest('[data-action="clear"]')) {
             deleteEntry(dateStr);
-        } else if (e.target.dataset.action === 'pick') {
+        } else if (e.target.closest('[data-action="note"]')) {
+            openNoteEditor(dateStr);
+        } else if (e.target.closest('[data-action="pick"]')) {
             openPicker(
                 dateStr,
                 parseLocalISO(dateStr).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' })
@@ -344,7 +363,7 @@ async function renderMeals() {
 
     if (navigator.onLine) {
         const { data, error } = await _supabase.from('calendar')
-            .select('date, meal_name')
+            .select('date, meal_name, note')
             .gte('date', startISO)
             .lte('date', endISO);
 
@@ -358,7 +377,7 @@ async function renderMeals() {
                 d.setDate(d.getDate() + i);
                 delete newCache[toLocalISO(d)];
             }
-            for (const m of savedMeals) newCache[m.date] = m.meal_name;
+            for (const m of savedMeals) newCache[m.date] = { meal_name: m.meal_name, note: m.note };
             setCache(newCache);
         }
     } else {
@@ -366,7 +385,7 @@ async function renderMeals() {
             const d = new Date(currentViewDate);
             d.setDate(d.getDate() + i);
             const k = toLocalISO(d);
-            if (cache[k]) savedMeals.push({ date: k, meal_name: cache[k] });
+            if (cache[k]) savedMeals.push({ date: k, ...cache[k] });
         }
     }
 
@@ -374,8 +393,11 @@ async function renderMeals() {
     for (const op of getQueue()) {
         const date = op.payload.date;
         if (!date || date < startISO || date > endISO) continue;
-        if (op.type === 'upsert-calendar') pending[date] = op.payload.meal_name;
-        else if (op.type === 'delete-calendar') pending[date] = null;
+        
+        if (!pending[date]) pending[date] = {};
+        if (op.type === 'upsert-calendar') pending[date].meal_name = op.payload.meal_name;
+        else if (op.type === 'delete-calendar') pending[date].meal_name = null;
+        else if (op.type === 'upsert-note') pending[date].note = op.payload.note;
     }
 
     const today = todayISO();
@@ -385,13 +407,13 @@ async function renderMeals() {
         d.setDate(d.getDate() + i);
         const dateStr = toLocalISO(d);
 
-        let mealName;
+        let entry = savedMeals.find(m => m.date === dateStr) || {};
         if (dateStr in pending) {
-            mealName = pending[dateStr];
-        } else {
-            const entry = savedMeals.find(m => m.date === dateStr);
-            mealName = entry ? entry.meal_name : null;
+            entry = { ...entry, ...pending[dateStr] };
         }
+
+        const mealName = entry.meal_name;
+        const note = entry.note;
 
         const isToday = dateStr === today;
         const card = document.createElement('div');
@@ -405,14 +427,34 @@ async function renderMeals() {
         label.className = 'card-label';
         label.textContent = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' }) + (isToday ? ' · Today' : '');
 
+        const actions = document.createElement('div');
+        actions.className = 'card-actions';
+
+        if (mealName) {
+            const noteBtn = document.createElement('button');
+            noteBtn.className = 'note-btn' + (note && note.trim() !== '' ? ' has-note' : '');
+            noteBtn.dataset.action = 'note';
+            noteBtn.setAttribute('aria-label', 'Edit note');
+            // Notepad SVG icon
+            noteBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+                <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>`;
+            actions.appendChild(noteBtn);
+        }
+
         const clearBtn = document.createElement('button');
         clearBtn.className = 'clear-btn';
         clearBtn.dataset.action = 'clear';
         clearBtn.setAttribute('aria-label', 'Clear meal');
         clearBtn.textContent = '×';
+        actions.appendChild(clearBtn);
 
         header.appendChild(label);
-        header.appendChild(clearBtn);
+        header.appendChild(actions);
 
         const display = document.createElement('div');
         display.className = 'meal-display' + (mealName ? '' : ' empty');
@@ -422,6 +464,50 @@ async function renderMeals() {
         card.appendChild(header);
         card.appendChild(display);
         wrapper.appendChild(card);
+    }
+}
+
+// ---------------- Note Editor ----------------
+
+function openNoteEditor(dateStr) {
+    activeNoteDate = dateStr;
+    const modal = document.getElementById('note-modal');
+    const input = document.getElementById('note-input');
+    const label = document.getElementById('note-date-label');
+    
+    const cache = getCache();
+    const existingNote = cache[dateStr]?.note || '';
+
+    label.textContent = 'Note · ' + parseLocalISO(dateStr).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' });
+    input.value = existingNote;
+    modal.style.display = 'block';
+    setTimeout(() => input.focus(), 50);
+}
+
+async function saveNote() {
+    const dateStr = activeNoteDate;
+    if (!dateStr) return;
+
+    const input = document.getElementById('note-input');
+    const noteText = input.value.trim();
+    
+    document.getElementById('note-modal').style.display = 'none';
+    activeNoteDate = null;
+
+    // Optimistic UI
+    enqueue({ type: 'upsert-note', payload: { date: dateStr, note: noteText || null } });
+    renderMeals();
+
+    if (navigator.onLine) {
+        const { error } = await _supabase.from('calendar').update({ note: noteText || null }).eq('date', dateStr);
+        if (error) {
+            showToast(`Failed to save note: ${error.message}`, true);
+        } else {
+            removeFromQueue({ type: 'upsert-note', payload: { date: dateStr } });
+            renderMeals();
+        }
+    } else {
+        showToast('Note saved offline — will sync');
     }
 }
 
@@ -512,24 +598,25 @@ async function selectMeal(name) {
     const formattedName = formatMealName(rawName);
     let finalName = formattedName;
     
-    // Capture the date BEFORE closing the modal
     const targetDate = activePickerDate;
     if (!targetDate) return;
 
-    // Close modal immediately
     closePicker();
 
+    // Preserve any existing note for this day
+    const cache = getCache();
+    const existingNote = cache[targetDate]?.note || null;
+
     // Optimistic UI: Enqueue immediately so renderMeals picks it up
-    enqueue({ type: 'upsert-calendar', payload: { date: targetDate, meal_name: finalName } });
+    enqueue({ type: 'upsert-calendar', payload: { date: targetDate, meal_name: finalName, note: existingNote } });
     renderMeals();
 
     if (navigator.onLine) {
-        // Check for existing meal to standardise casing
         const { data: existing } = await _supabase.from('meals').select('name').ilike('name', formattedName).maybeSingle();
         
         if (existing) {
             finalName = existing.name;
-            enqueue({ type: 'upsert-calendar', payload: { date: targetDate, meal_name: finalName } });
+            enqueue({ type: 'upsert-calendar', payload: { date: targetDate, meal_name: finalName, note: existingNote } });
             renderMeals();
         } else {
             await _supabase.from('meals').insert({ name: formattedName });
@@ -537,17 +624,16 @@ async function selectMeal(name) {
 
         const { error: upsertError } = await _supabase.from('calendar').upsert({
             date: targetDate,
-            meal_name: finalName
+            meal_name: finalName,
+            note: existingNote
         });
 
         if (upsertError) {
             console.error("Upsert error:", upsertError);
-            // Revert on failure
             removeFromQueue({ type: 'upsert-calendar', payload: { date: targetDate } });
             renderMeals();
             showToast(`Save failed: ${upsertError.message}`, true);
         } else {
-            // Success! Remove from queue
             removeFromQueue({ type: 'upsert-calendar', payload: { date: targetDate } });
             renderMeals();
         }
@@ -566,7 +652,6 @@ function closePicker() {
 async function deleteEntry(dateStr) {
     if (!confirm('Are you sure you want to remove this meal from the calendar?')) return;
 
-    // Optimistic UI
     enqueue({ type: 'delete-calendar', payload: { date: dateStr } });
     renderMeals();
 
@@ -574,7 +659,6 @@ async function deleteEntry(dateStr) {
         const { error } = await _supabase.from('calendar').delete().eq('date', dateStr);
         if (error) {
             console.error("Delete error:", error);
-            // Revert on failure
             removeFromQueue({ type: 'delete-calendar', payload: { date: dateStr } });
             renderMeals();
             showToast(`Could not delete: ${error.message}`, true);

@@ -1,4 +1,4 @@
-const CACHE = 'meal-planner-v11';
+const CACHE = 'meal-planner-v12';
 const ASSETS = [
     './',
     './index.html',
