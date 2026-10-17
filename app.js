@@ -142,7 +142,7 @@ async function flushQueue() {
 
     if (remaining.length === 0 && q.length > 0) {
         showToast('Synced offline changes');
-        renderMeals();
+        queueRender(true);
     }
 }
 
@@ -156,7 +156,6 @@ const MEALS_CACHE_KEY = 'mealPlannerMeals';
 function getCache() {
     try {
         const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
-        // Handle upgrade from old string-based cache to object-based
         for (const key in cache) {
             if (typeof cache[key] === 'string') {
                 cache[key] = { meal_name: cache[key], note: null };
@@ -167,6 +166,19 @@ function getCache() {
     catch { return {}; }
 }
 function setCache(c) { localStorage.setItem(CACHE_KEY, JSON.stringify(c)); }
+
+function updateCache(dateStr, updates) {
+    const cache = getCache();
+    if (!cache[dateStr]) cache[dateStr] = {};
+    Object.assign(cache[dateStr], updates);
+    setCache(cache);
+}
+
+function removeFromCache(dateStr) {
+    const cache = getCache();
+    delete cache[dateStr];
+    setCache(cache);
+}
 
 function getMealsCache() {
     try { return JSON.parse(localStorage.getItem(MEALS_CACHE_KEY) || '[]'); }
@@ -197,7 +209,10 @@ async function init() {
             const endISO = toLocalISO(dEnd);
 
             if (changedDate >= startISO && changedDate <= endISO) {
-                renderMeals(); 
+                const hasPending = getQueue().some(op => op.payload.date === changedDate);
+                if (!hasPending) {
+                    queueRender(true); 
+                }
             }
         })
         .subscribe();
@@ -311,7 +326,7 @@ function moveWeek(days) {
 
 function renderUI() {
     renderHeader();
-    renderMeals();
+    renderMeals(true);
 }
 
 function renderHeader() {
@@ -348,10 +363,17 @@ function renderHeader() {
 
 // ---------------- Meal list ----------------
 
-async function renderMeals() {
-    const wrapper = document.getElementById('calendar-wrapper');
-    wrapper.innerHTML = '';
+let renderTimer = null;
+function queueRender(fetchNetwork = true) {
+    if (renderTimer) clearTimeout(renderTimer);
+    renderTimer = setTimeout(() => {
+        renderMeals(fetchNetwork);
+    }, 50);
+}
 
+async function renderMeals(fetchNetwork = true) {
+    const wrapper = document.getElementById('calendar-wrapper');
+    
     const dStart = new Date(currentViewDate);
     const dEnd = new Date(currentViewDate);
     dEnd.setDate(dEnd.getDate() + 6);
@@ -361,15 +383,13 @@ async function renderMeals() {
     let savedMeals = [];
     const cache = getCache();
 
-    if (navigator.onLine) {
+    if (navigator.onLine && fetchNetwork) {
         const { data, error } = await _supabase.from('calendar')
             .select('date, meal_name, note')
             .gte('date', startISO)
             .lte('date', endISO);
 
-        if (error) {
-            showToast('Could not load meals', true);
-        } else {
+        if (!error) {
             savedMeals = data || [];
             const newCache = { ...cache };
             for (let i = 0; i < 7; i++) {
@@ -389,18 +409,25 @@ async function renderMeals() {
         }
     }
 
+    // Overlay offline queue
     const pending = {};
     for (const op of getQueue()) {
         const date = op.payload.date;
         if (!date || date < startISO || date > endISO) continue;
-        
         if (!pending[date]) pending[date] = {};
         if (op.type === 'upsert-calendar') pending[date].meal_name = op.payload.meal_name;
         else if (op.type === 'delete-calendar') pending[date].meal_name = null;
         else if (op.type === 'upsert-note') pending[date].note = op.payload.note;
     }
 
+    // Cache existing DOM cards to update in place
+    const existingCards = {};
+    wrapper.querySelectorAll('.date-card').forEach(el => {
+        existingCards[el.dataset.date] = el;
+    });
+
     const today = todayISO();
+    const fragment = document.createDocumentFragment();
 
     for (let i = 0; i < 7; i++) {
         const d = new Date(currentViewDate);
@@ -414,57 +441,88 @@ async function renderMeals() {
 
         const mealName = entry.meal_name;
         const note = entry.note;
-
         const isToday = dateStr === today;
-        const card = document.createElement('div');
-        card.className = 'date-card' + (isToday ? ' is-today' : '');
-        card.dataset.date = dateStr;
+        const readableDate = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' }) + (isToday ? ' · Today' : '');
 
-        const header = document.createElement('div');
-        header.className = 'card-header';
+        let card = existingCards[dateStr];
+        
+        if (card) {
+            // Update in place to avoid flashing
+            const label = card.querySelector('.card-label');
+            if (label) label.textContent = readableDate;
+            
+            const display = card.querySelector('.meal-display');
+            if (display) {
+                display.textContent = mealName || 'Plan dinner...';
+                display.className = 'meal-display' + (mealName ? '' : ' empty');
+            }
 
-        const label = document.createElement('span');
-        label.className = 'card-label';
-        label.textContent = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' }) + (isToday ? ' · Today' : '');
+            const actions = card.querySelector('.card-actions');
+            let noteBtn = actions.querySelector('.note-btn');
+            
+            if (mealName) {
+                if (!noteBtn) {
+                    noteBtn = document.createElement('button');
+                    noteBtn.className = 'note-btn';
+                    noteBtn.dataset.action = 'note';
+                    noteBtn.setAttribute('aria-label', 'Edit note');
+                    noteBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>`;
+                    actions.insertBefore(noteBtn, actions.firstChild);
+                }
+                noteBtn.className = 'note-btn' + (note && note.trim() !== '' ? ' has-note' : '');
+            } else if (noteBtn) {
+                noteBtn.remove();
+            }
+            
+            fragment.appendChild(card);
+        } else {
+            // Build new card
+            card = document.createElement('div');
+            card.className = 'date-card' + (isToday ? ' is-today' : '');
+            card.dataset.date = dateStr;
 
-        const actions = document.createElement('div');
-        actions.className = 'card-actions';
+            const header = document.createElement('div');
+            header.className = 'card-header';
 
-        if (mealName) {
-            const noteBtn = document.createElement('button');
-            noteBtn.className = 'note-btn' + (note && note.trim() !== '' ? ' has-note' : '');
-            noteBtn.dataset.action = 'note';
-            noteBtn.setAttribute('aria-label', 'Edit note');
-            // Notepad SVG icon
-            noteBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-                <line x1="16" y1="13" x2="8" y2="13"></line>
-                <line x1="16" y1="17" x2="8" y2="17"></line>
-                <polyline points="10 9 9 9 8 9"></polyline>
-            </svg>`;
-            actions.appendChild(noteBtn);
+            const label = document.createElement('span');
+            label.className = 'card-label';
+            label.textContent = readableDate;
+
+            const actions = document.createElement('div');
+            actions.className = 'card-actions';
+
+            if (mealName) {
+                const noteBtn = document.createElement('button');
+                noteBtn.className = 'note-btn' + (note && note.trim() !== '' ? ' has-note' : '');
+                noteBtn.dataset.action = 'note';
+                noteBtn.setAttribute('aria-label', 'Edit note');
+                noteBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>`;
+                actions.appendChild(noteBtn);
+            }
+
+            const clearBtn = document.createElement('button');
+            clearBtn.className = 'clear-btn';
+            clearBtn.dataset.action = 'clear';
+            clearBtn.setAttribute('aria-label', 'Clear meal');
+            clearBtn.textContent = '×';
+            actions.appendChild(clearBtn);
+
+            header.appendChild(label);
+            header.appendChild(actions);
+
+            const display = document.createElement('div');
+            display.className = 'meal-display' + (mealName ? '' : ' empty');
+            display.dataset.action = 'pick';
+            display.textContent = mealName || 'Plan dinner...';
+
+            card.appendChild(header);
+            card.appendChild(display);
+            fragment.appendChild(card);
         }
-
-        const clearBtn = document.createElement('button');
-        clearBtn.className = 'clear-btn';
-        clearBtn.dataset.action = 'clear';
-        clearBtn.setAttribute('aria-label', 'Clear meal');
-        clearBtn.textContent = '×';
-        actions.appendChild(clearBtn);
-
-        header.appendChild(label);
-        header.appendChild(actions);
-
-        const display = document.createElement('div');
-        display.className = 'meal-display' + (mealName ? '' : ' empty');
-        display.dataset.action = 'pick';
-        display.textContent = mealName || 'Plan dinner...';
-
-        card.appendChild(header);
-        card.appendChild(display);
-        wrapper.appendChild(card);
     }
+
+    // Single DOM replacement
+    wrapper.replaceChildren(fragment);
 }
 
 // ---------------- Note Editor ----------------
@@ -495,8 +553,9 @@ async function saveNote() {
     activeNoteDate = null;
 
     // Optimistic UI
+    updateCache(dateStr, { note: noteText || null });
     enqueue({ type: 'upsert-note', payload: { date: dateStr, note: noteText || null } });
-    renderMeals();
+    renderMeals(false);
 
     if (navigator.onLine) {
         const { error } = await _supabase.from('calendar').update({ note: noteText || null }).eq('date', dateStr);
@@ -504,7 +563,7 @@ async function saveNote() {
             showToast(`Failed to save note: ${error.message}`, true);
         } else {
             removeFromQueue({ type: 'upsert-note', payload: { date: dateStr } });
-            renderMeals();
+            renderMeals(false);
         }
     } else {
         showToast('Note saved offline — will sync');
@@ -603,21 +662,22 @@ async function selectMeal(name) {
 
     closePicker();
 
-    // Preserve any existing note for this day
     const cache = getCache();
     const existingNote = cache[targetDate]?.note || null;
 
-    // Optimistic UI: Enqueue immediately so renderMeals picks it up
+    // Optimistic UI
+    updateCache(targetDate, { meal_name: finalName, note: existingNote });
     enqueue({ type: 'upsert-calendar', payload: { date: targetDate, meal_name: finalName, note: existingNote } });
-    renderMeals();
+    renderMeals(false);
 
     if (navigator.onLine) {
         const { data: existing } = await _supabase.from('meals').select('name').ilike('name', formattedName).maybeSingle();
         
         if (existing) {
             finalName = existing.name;
+            updateCache(targetDate, { meal_name: finalName });
             enqueue({ type: 'upsert-calendar', payload: { date: targetDate, meal_name: finalName, note: existingNote } });
-            renderMeals();
+            renderMeals(false);
         } else {
             await _supabase.from('meals').insert({ name: formattedName });
         }
@@ -631,11 +691,11 @@ async function selectMeal(name) {
         if (upsertError) {
             console.error("Upsert error:", upsertError);
             removeFromQueue({ type: 'upsert-calendar', payload: { date: targetDate } });
-            renderMeals();
+            renderMeals(true); // Revert from network
             showToast(`Save failed: ${upsertError.message}`, true);
         } else {
             removeFromQueue({ type: 'upsert-calendar', payload: { date: targetDate } });
-            renderMeals();
+            renderMeals(false);
         }
     } else {
         showToast('Saved offline — will sync');
@@ -652,20 +712,26 @@ function closePicker() {
 async function deleteEntry(dateStr) {
     if (!confirm('Are you sure you want to remove this meal from the calendar?')) return;
 
+    const cache = getCache();
+    const oldEntry = cache[dateStr] ? { ...cache[dateStr] } : null;
+
+    // Optimistic UI
+    removeFromCache(dateStr);
     enqueue({ type: 'delete-calendar', payload: { date: dateStr } });
-    renderMeals();
+    renderMeals(false);
 
     if (navigator.onLine) {
         const { error } = await _supabase.from('calendar').delete().eq('date', dateStr);
         if (error) {
             console.error("Delete error:", error);
+            if (oldEntry) updateCache(dateStr, oldEntry);
             removeFromQueue({ type: 'delete-calendar', payload: { date: dateStr } });
-            renderMeals();
+            renderMeals(false);
             showToast(`Could not delete: ${error.message}`, true);
             return;
         }
         removeFromQueue({ type: 'delete-calendar', payload: { date: dateStr } });
-        renderMeals();
+        renderMeals(false);
     } else {
         showToast('Deleted offline — will sync');
     }
@@ -851,7 +917,7 @@ async function deleteFromMaster(name) {
     }
 
     openMealEditor();
-    renderMeals();
+    renderMeals(true);
 }
 
 async function mergeMeals(selectedNames) {
@@ -903,7 +969,7 @@ async function mergeMeals(selectedNames) {
     isMergeMode = false;
     selectedMergeMeals.clear();
     openMealEditor();
-    renderMeals();
+    renderMeals(true);
 }
 
 // ---------------- Popular meals ----------------
