@@ -191,7 +191,7 @@ main {
 .picker-item:active { background: #f2f2f7; }
 .picker-item.add-new { color: var(--accent); font-weight: 600; }
 
-.editor-add-row { display: flex; gap: 10px; margin-bottom: 15px; }
+.editor-add-row { display: flex; gap: 10px; margin-bottom: 10px; }
 .editor-input {
     flex-grow: 1; padding: 10px; border: 1px solid #ddd;
     border-radius: 8px; font-size: 16px;
@@ -209,6 +209,30 @@ main {
     color: var(--danger); border: none; background: none;
     font-weight: 600; font-size: 15px; cursor: pointer;
 }
+
+/* Merge Mode Styles */
+.merge-checkbox {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+.merge-label {
+    display: flex; align-items: center; gap: 12px;
+    flex: 1; cursor: pointer; user-select: none;
+    font-size: 16px;
+}
+.toggle-merge-btn {
+    background: none; border: none; color: var(--accent);
+    font-weight: 600; font-size: 15px; cursor: pointer;
+    padding: 0; margin-bottom: 15px;
+}
+.confirm-merge-btn {
+    background: var(--accent); color: white; border: none;
+    padding: 8px 12px; border-radius: 8px;
+    font-weight: 600; font-size: 14px; cursor: pointer;
+}
+.confirm-merge-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Popular meals */
 .range-selector {

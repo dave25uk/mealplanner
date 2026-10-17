@@ -27,6 +27,32 @@ function formatMealName(raw) {
         .join(' ');
 }
 
+// Checks for similar sounding meals (ignores punctuation, &, etc.)
+function getSimilarMeals(newName, existingMeals) {
+    const normalize = s => s.toLowerCase().replace(/ & /g, ' and ').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+    const target = normalize(newName);
+    const targetWords = new Set(target.split(' ').filter(w => w.length > 2)); // ignore small words
+
+    return existingMeals.filter(m => {
+        const current = normalize(m.name);
+        if (current === target) return true;
+        
+        const currentWords = new Set(current.split(' ').filter(w => w.length > 2));
+        let intersection = 0;
+        for (const w of targetWords) {
+            if (currentWords.has(w)) intersection++;
+        }
+        
+        // If one contains the other, or they share almost all words
+        if (intersection > 0 && (current.includes(target) || target.includes(current))) return true;
+        
+        const minWords = Math.min(targetWords.size, currentWords.size);
+        if (minWords > 0 && intersection >= minWords - 1) return true;
+        
+        return false;
+    });
+}
+
 // ---------------- Toast ----------------
 
 let toastTimer;
@@ -43,7 +69,7 @@ function showToast(message, isError = false) {
     void el.offsetWidth;
     el.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
 }
 
 // ---------------- Offline queue ----------------
@@ -63,9 +89,6 @@ function opKey(op) {
     }
     if (op.type === 'insert-meal' || op.type === 'delete-meal') {
         return 'meal::' + (op.payload.name || '').toLowerCase();
-    }
-    if (op.type === 'delete-calendar-by-meal') {
-        return 'calendar-by-meal::' + (op.payload.meal_name || '').toLowerCase();
     }
     return JSON.stringify(op);
 }
@@ -93,8 +116,6 @@ async function flushQueue() {
                 ({ error } = await _supabase.from('calendar').upsert(op.payload));
             } else if (op.type === 'delete-calendar') {
                 ({ error } = await _supabase.from('calendar').delete().eq('date', op.payload.date));
-            } else if (op.type === 'delete-calendar-by-meal') {
-                ({ error } = await _supabase.from('calendar').delete().eq('meal_name', op.payload.meal_name));
             } else if (op.type === 'insert-meal') {
                 ({ error } = await _supabase.from('meals').insert(op.payload));
                 if (error && error.code === '23505') error = null;
@@ -198,8 +219,24 @@ async function init() {
     document.getElementById('meal-list-edit').addEventListener('click', e => {
         if (e.target.id === 'add-meal-btn') {
             addNewMeal();
+        } else if (e.target.id === 'toggle-merge-btn') {
+            isMergeMode = !isMergeMode;
+            selectedMergeMeals.clear();
+            openMealEditor();
+        } else if (e.target.id === 'confirm-merge-btn') {
+            if (selectedMergeMeals.size >= 2) {
+                mergeMeals(Array.from(selectedMergeMeals));
+            }
         } else if (e.target.classList.contains('editor-delete')) {
             deleteFromMaster(e.target.dataset.meal);
+        }
+    });
+
+    document.getElementById('meal-list-edit').addEventListener('change', e => {
+        if (e.target.classList.contains('merge-checkbox')) {
+            if (e.target.checked) selectedMergeMeals.add(e.target.value);
+            else selectedMergeMeals.delete(e.target.value);
+            updateMergeBtn();
         }
     });
 
@@ -456,6 +493,18 @@ async function selectMeal(name) {
         if (existing) {
             finalName = existing.name;
         } else {
+            // Check for similar meals before inserting
+            const { data: allMeals } = await _supabase.from('meals').select('name');
+            if (allMeals) {
+                const similar = getSimilarMeals(formattedName, allMeals);
+                if (similar.length > 0) {
+                    const similarNames = similar.map(m => m.name).join(', ');
+                    if (!confirm(`Warning: Similar meals exist: ${similarNames}.\n\nAdd "${formattedName}" anyway?`)) {
+                        return;
+                    }
+                }
+            }
+
             const { error: insertError } = await _supabase
                 .from('meals')
                 .insert({ name: formattedName });
@@ -511,15 +560,39 @@ async function deleteEntry(dateStr) {
 
 // ---------------- Master meal editor ----------------
 
+let isMergeMode = false;
+let selectedMergeMeals = new Set();
+
 async function openMealEditor() {
     document.getElementById('meal-modal').style.display = 'block';
     const container = document.getElementById('meal-list-edit');
-    container.innerHTML = `
-        <div class="editor-add-row">
-            <input type="text" id="new-meal-input" placeholder="New meal..." class="editor-input">
-            <button id="add-meal-btn" class="editor-add-btn">Add</button>
-        </div>
+    container.innerHTML = '';
+
+    // Add new meal row
+    const addRow = document.createElement('div');
+    addRow.className = 'editor-add-row';
+    addRow.style.display = isMergeMode ? 'none' : 'flex';
+    addRow.innerHTML = `
+        <input type="text" id="new-meal-input" placeholder="New meal..." class="editor-input">
+        <button id="add-meal-btn" class="editor-add-btn">Add</button>
     `;
+    container.appendChild(addRow);
+
+    // Merge toggle
+    const mergeHeader = document.createElement('div');
+    mergeHeader.style.display = 'flex';
+    mergeHeader.style.justifyContent = 'space-between';
+    mergeHeader.style.alignItems = 'center';
+    mergeHeader.style.marginBottom = '15px';
+    mergeHeader.innerHTML = `
+        <button id="toggle-merge-btn" class="toggle-merge-btn">
+            ${isMergeMode ? 'Cancel Merge' : 'Combine / Merge Meals'}
+        </button>
+        <button id="confirm-merge-btn" class="confirm-merge-btn" style="display:${isMergeMode ? 'block' : 'none'};" disabled>
+            Merge Selected (0)
+        </button>
+    `;
+    container.appendChild(mergeHeader);
 
     let meals = [];
 
@@ -555,20 +628,47 @@ async function openMealEditor() {
         const row = document.createElement('div');
         row.className = 'editor-row';
 
-        const span = document.createElement('span');
-        span.textContent = m.name;
+        if (isMergeMode) {
+            const label = document.createElement('label');
+            label.className = 'merge-label';
+            
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.className = 'merge-checkbox';
+            cb.value = m.name;
+            cb.checked = selectedMergeMeals.has(m.name);
+            
+            const span = document.createElement('span');
+            span.textContent = m.name;
+            
+            label.appendChild(cb);
+            label.appendChild(span);
+            row.appendChild(label);
+        } else {
+            const span = document.createElement('span');
+            span.textContent = m.name;
+            row.appendChild(span);
 
-        const btn = document.createElement('button');
-        btn.className = 'editor-delete';
-        btn.dataset.meal = m.name;
-        btn.textContent = 'Delete';
+            const btn = document.createElement('button');
+            btn.className = 'editor-delete';
+            btn.dataset.meal = m.name;
+            btn.textContent = 'Delete';
+            row.appendChild(btn);
+        }
 
-        row.appendChild(span);
-        row.appendChild(btn);
         listEl.appendChild(row);
     }
 
     container.appendChild(listEl);
+    updateMergeBtn();
+}
+
+function updateMergeBtn() {
+    const btn = document.getElementById('confirm-merge-btn');
+    if (btn) {
+        btn.textContent = `Merge Selected (${selectedMergeMeals.size})`;
+        btn.disabled = selectedMergeMeals.size < 2;
+    }
 }
 
 async function addNewMeal() {
@@ -579,12 +679,31 @@ async function addNewMeal() {
     const formatted = formatMealName(name);
 
     if (navigator.onLine) {
+        const { data: allMeals } = await _supabase.from('meals').select('name');
+        if (allMeals) {
+            const similar = getSimilarMeals(formatted, allMeals);
+            if (similar.length > 0) {
+                const similarNames = similar.map(m => m.name).join(', ');
+                if (!confirm(`Warning: Similar meals exist: ${similarNames}.\n\nAdd "${formatted}" anyway?`)) {
+                    return;
+                }
+            }
+        }
+
         const { error } = await _supabase.from('meals').insert({ name: formatted });
         if (error && error.code !== '23505') {
             showToast('Could not add meal', true);
             return;
         }
     } else {
+        const localMeals = getMealsCache();
+        const similar = getSimilarMeals(formatted, localMeals);
+        if (similar.length > 0) {
+            const similarNames = similar.map(m => m.name).join(', ');
+            if (!confirm(`Warning: Similar meals exist: ${similarNames}.\n\nAdd "${formatted}" anyway?`)) {
+                return;
+            }
+        }
         enqueue({ type: 'insert-meal', payload: { name: formatted } });
         showToast('Saved offline — will sync');
     }
@@ -602,29 +721,80 @@ async function deleteFromMaster(name) {
         if (!error) count = c || 0;
     }
 
-    const msg = count > 0
-        ? `Delete "${name}"?\n\nIt's used on ${count} calendar ${count === 1 ? 'day' : 'days'} — those will be cleared too.`
-        : `Delete "${name}"?`;
+    if (count > 0) {
+        showToast(`Cannot delete: planned on ${count} day${count === 1 ? '' : 's'}. Use "Combine / Merge Meals" to combine it.`, true);
+        return;
+    }
 
-    if (!confirm(msg)) return;
+    if (!confirm(`Delete "${name}"?`)) return;
 
     if (navigator.onLine) {
-        const { error: e1 } = await _supabase.from('calendar').delete().eq('meal_name', name);
-        if (e1) {
-            showToast('Could not remove calendar entries', true);
-            return;
-        }
-        const { error: e2 } = await _supabase.from('meals').delete().eq('name', name);
-        if (e2) {
+        const { error } = await _supabase.from('meals').delete().eq('name', name);
+        if (error) {
             showToast('Could not delete meal', true);
             return;
         }
     } else {
-        enqueue({ type: 'delete-calendar-by-meal', payload: { meal_name: name } });
         enqueue({ type: 'delete-meal', payload: { name } });
         showToast('Deleted offline — will sync');
     }
 
+    openMealEditor();
+    renderMeals();
+}
+
+async function mergeMeals(selectedNames) {
+    if (!navigator.onLine) {
+        showToast('You must be online to merge meals', true);
+        return;
+    }
+
+    const keepName = prompt(`Which name should we keep for these ${selectedNames.length} meals?\n\nOptions: ${selectedNames.join(', ')}`, selectedNames[0]);
+    if (!keepName || !keepName.trim()) return;
+    
+    const formattedKeep = formatMealName(keepName);
+    
+    // Check if the new name conflicts with a meal not selected
+    const otherMeals = getMealsCache().filter(m => !selectedNames.includes(m.name));
+    const similar = getSimilarMeals(formattedKeep, otherMeals);
+    if (similar.length > 0) {
+        const similarNames = similar.map(m => m.name).join(', ');
+        if (!confirm(`Warning: Similar meals exist outside your selection: ${similarNames}.\n\nUse "${formattedKeep}" anyway?`)) {
+            return;
+        }
+    }
+    
+    if (!confirm(`Merge ${selectedNames.length} meals into "${formattedKeep}"?\n\nAll calendar days using the other names will be updated.`)) return;
+
+    // 1. Update calendar entries
+    const { error: e1 } = await _supabase.from('calendar')
+        .update({ meal_name: formattedKeep })
+        .in('meal_name', selectedNames);
+        
+    if (e1) {
+        showToast('Error updating calendar', true);
+        return;
+    }
+    
+    // 2. Delete old meals
+    const toDelete = selectedNames.filter(n => n !== formattedKeep);
+    if (toDelete.length > 0) {
+        const { error: e2 } = await _supabase.from('meals')
+            .delete()
+            .in('name', toDelete);
+        if (e2) showToast('Error deleting old meals', true);
+    }
+    
+    // 3. Ensure formattedKeep exists in meals
+    const { data: existing } = await _supabase.from('meals').select('name').ilike('name', formattedKeep).maybeSingle();
+    if (!existing) {
+        const { error: e3 } = await _supabase.from('meals').insert({ name: formattedKeep });
+        if (e3 && e3.code !== '23505') showToast('Error adding new meal name', true);
+    }
+    
+    showToast('Meals merged successfully');
+    isMergeMode = false;
+    selectedMergeMeals.clear();
     openMealEditor();
     renderMeals();
 }
@@ -646,7 +816,6 @@ async function renderPopularList(range) {
     const container = document.getElementById('popular-list');
     const selector = document.getElementById('popular-range-selector');
 
-    // Update segmented control UI
     selector.querySelectorAll('button').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.range === range);
     });
@@ -681,7 +850,6 @@ async function renderPopularList(range) {
 
     const { data, error } = await query;
 
-    // Abort if a newer request was started while this one was waiting
     if (reqId !== popularRequestId) return;
 
     if (error) {
@@ -690,7 +858,6 @@ async function renderPopularList(range) {
         return;
     }
 
-    // Dates overridden by queued offline upserts (so we don't double-count)
     const queuedDates = new Map();
     for (const op of getQueue()) {
         if (op.type === 'upsert-calendar') {
