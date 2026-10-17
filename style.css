@@ -83,18 +83,48 @@ main {
     padding: 6px 12px 8px;
 }
 
-.date-card {
+/* Swipe to delete styles */
+.date-card-wrapper {
+    position: relative;
+    overflow: hidden;
+    border-radius: 10px;
+    background: var(--danger);
     flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.swipe-delete-bg {
+    position: absolute;
+    top: 0; right: 0; bottom: 0;
+    width: 100px;
+    background: var(--danger);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 15px;
+    z-index: 1;
+}
+
+.date-card {
+    flex: 1 1 auto;
     display: flex;
     flex-direction: column;
     justify-content: center;
     background: var(--card);
     padding: 8px 14px;
-    border-radius: 10px;
     box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     border-left: 3px solid transparent;
+    position: relative;
+    z-index: 2;
+    transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+    transform: translateX(0);
+    touch-action: pan-y; /* Allow vertical scrolling, capture horizontal */
 }
 .date-card.is-today { border-left-color: var(--accent); }
+.date-card.swiped { transform: translateX(-100px); }
 
 .card-header {
     display: flex;
@@ -120,6 +150,7 @@ main {
     color: #c7c7cc; font-size: 20px;
     padding: 0 5px; cursor: pointer;
     line-height: 1;
+    display: none; /* Hidden in favour of swipe */
 }
 
 .bottom-nav {
@@ -212,8 +243,7 @@ main {
 
 /* Merge Mode Styles */
 .merge-checkbox {
-    width: 20px;
-    height: 20px;
+    width: 20px; height: 20px;
     accent-color: var(--accent);
     cursor: pointer;
 }
@@ -236,89 +266,49 @@ main {
 
 /* Popular meals */
 .range-selector {
-    display: flex;
-    background: #e5e5ea;
-    border-radius: 8px;
-    padding: 2px;
-    margin-bottom: 15px;
+    display: flex; background: #e5e5ea;
+    border-radius: 8px; padding: 2px; margin-bottom: 15px;
 }
 .range-selector button {
-    flex: 1;
-    background: transparent;
-    border: none;
-    padding: 6px;
-    border-radius: 6px;
-    font-size: 13px;
-    font-weight: 600;
-    color: #8e8e93;
-    cursor: pointer;
+    flex: 1; background: transparent; border: none;
+    padding: 6px; border-radius: 6px; font-size: 13px;
+    font-weight: 600; color: #8e8e93; cursor: pointer;
     transition: all 0.2s;
 }
 .range-selector button.active {
-    background: white;
-    color: #000;
+    background: white; color: #000;
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 
 .popular-subtitle {
-    font-size: 13px;
-    color: #8e8e93;
-    margin: 0 0 15px;
+    font-size: 13px; color: #8e8e93; margin: 0 0 15px;
 }
 .popular-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 0;
-    border-bottom: 1px solid #eee;
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 0; border-bottom: 1px solid #eee;
 }
 .popular-rank {
-    flex: 0 0 auto;
-    width: 28px; height: 28px;
-    border-radius: 50%;
-    background: #f2f2f7;
-    color: #8e8e93;
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 700;
-    font-size: 13px;
+    flex: 0 0 auto; width: 28px; height: 28px;
+    border-radius: 50%; background: #f2f2f7;
+    color: #8e8e93; display: flex;
+    align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px;
 }
 .popular-rank.top { background: var(--accent); color: #fff; }
-.popular-name {
-    flex: 1;
-    font-size: 16px;
-    font-weight: 500;
-    color: #000;
-}
-.popular-count {
-    flex: 0 0 auto;
-    color: #8e8e93;
-    font-weight: 600;
-    font-size: 15px;
-}
-.popular-empty {
-    text-align: center;
-    color: #8e8e93;
-    padding: 40px 0;
-    font-style: italic;
-}
+.popular-name { flex: 1; font-size: 16px; font-weight: 500; color: #000; }
+.popular-count { flex: 0 0 auto; color: #8e8e93; font-weight: 600; font-size: 15px; }
+.popular-empty { text-align: center; color: #8e8e93; padding: 40px 0; font-style: italic; }
 
 .toast {
-    position: fixed;
-    left: 50%;
+    position: fixed; left: 50%;
     bottom: calc(80px + env(safe-area-inset-bottom));
     transform: translateX(-50%) translateY(10px);
-    background: rgba(0,0,0,0.85);
-    color: white;
-    padding: 10px 16px;
-    border-radius: 20px;
-    font-size: 14px;
-    font-weight: 500;
-    opacity: 0;
-    pointer-events: none;
+    background: rgba(0,0,0,0.85); color: white;
+    padding: 10px 16px; border-radius: 20px;
+    font-size: 14px; font-weight: 500;
+    opacity: 0; pointer-events: none;
     transition: opacity 0.2s ease, transform 0.2s ease;
-    z-index: 2000;
-    max-width: 80vw;
-    text-align: center;
+    z-index: 2000; max-width: 80vw; text-align: center;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.error { background: var(--danger); }

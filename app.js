@@ -33,40 +33,27 @@ function getSimilarMeals(newName, existingMeals) {
     const target = normalize(newName);
     if (!target) return [];
 
-    // Extract significant words (length >= 4, ignores "and", "pot", "pie", etc.)
     const getWords = str => str.split(' ').filter(w => w.length >= 4);
     const targetWords = getWords(target);
 
     return existingMeals.filter(m => {
         const current = normalize(m.name);
         if (current === target) return true;
-
         const currentWords = getWords(current);
         
-        // If the target is just small words (e.g., "Pie"), fall back to a substring check
-        if (targetWords.length === 0) {
-            return current.includes(target);
-        }
+        if (targetWords.length === 0) return current.includes(target);
 
-        // Check for overlaps in significant words
         let overlap = 0;
         for (const tw of targetWords) {
             if (currentWords.some(cw => {
                 if (tw === cw) return true;
-                // Allow "cheese" to match "cheesy" (starts with)
                 if (tw.startsWith(cw) || cw.startsWith(tw)) return true;
                 return false;
-            })) {
-                overlap++;
-            }
+            })) overlap++;
         }
 
-        // If they share at least one significant word, consider it a potential duplicate
         if (overlap > 0) return true;
-
-        // Fallback to broad substring matching (e.g., "Pizza" and "Pizza Hut")
         if (current.includes(target) || target.includes(current)) return true;
-
         return false;
     });
 }
@@ -178,14 +165,42 @@ function setMealsCache(m) { localStorage.setItem(MEALS_CACHE_KEY, JSON.stringify
 async function init() {
     currentViewDate.setHours(0, 0, 0, 0);
 
+    // 1. Supabase Anonymous Auth (Silent Login)
+    try {
+        await _supabase.auth.signInAnonymously();
+    } catch (err) {
+        console.warn("Anonymous auth failed. Ensure it's enabled in Supabase.", err);
+    }
+
+    // 2. Set up Realtime Sync
+    _supabase.channel('calendar_changes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar' }, payload => {
+            // Only refresh if the change happens on the currently viewed week
+            const changedDate = payload.new?.date || payload.old?.date;
+            if (!changedDate) return;
+
+            const dStart = new Date(currentViewDate);
+            const dEnd = new Date(currentViewDate);
+            dEnd.setDate(dEnd.getDate() + 6);
+            const startISO = toLocalISO(dStart);
+            const endISO = toLocalISO(dEnd);
+
+            if (changedDate >= startISO && changedDate <= endISO) {
+                // Don't want to over-write optimistic UI if the user is currently interacting
+                // But for a partner adding a meal, this will seamlessly update
+                renderMeals(); 
+            }
+        })
+        .subscribe();
+
+    // 3. UI Event Listeners
     document.querySelectorAll('.nav-arrow').forEach(btn => {
-        btn.addEventListener('click', () => {
-            moveWeek(btn.dataset.dir === 'prev' ? -7 : 7);
-        });
+        btn.addEventListener('click', () => moveWeek(btn.dataset.dir === 'prev' ? -7 : 7));
     });
 
     document.getElementById('manage-meals-btn').addEventListener('click', openMealEditor);
     document.getElementById('popular-btn').addEventListener('click', openPopular);
+    document.getElementById('random-meal-btn').addEventListener('click', pickRandomMeal);
 
     document.getElementById('popular-range-selector').addEventListener('click', e => {
         const btn = e.target.closest('button');
@@ -214,12 +229,19 @@ async function init() {
 
     document.getElementById('calendar-wrapper').addEventListener('click', e => {
         if (suppressClick) return;
+        
+        // Handle Swipe Delete Button Click
+        if (e.target.classList.contains('swipe-delete-bg')) {
+            const card = e.target.closest('.date-card-wrapper');
+            if (card) deleteEntry(card.dataset.date);
+            return;
+        }
+
         const card = e.target.closest('.date-card');
         if (!card) return;
         const dateStr = card.dataset.date;
-        if (e.target.dataset.action === 'clear') {
-            deleteEntry(dateStr);
-        } else if (e.target.dataset.action === 'pick') {
+
+        if (e.target.dataset.action === 'pick') {
             openPicker(
                 dateStr,
                 parseLocalISO(dateStr).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' })
@@ -265,9 +287,7 @@ async function init() {
 
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js').catch(err => {
-                console.warn('Service worker registration failed:', err);
-            });
+            navigator.serviceWorker.register('./sw.js').catch(err => console.warn(err));
         });
     }
 
@@ -303,9 +323,7 @@ function renderHeader() {
         const isToday = dateStr === today;
 
         const el = document.createElement('div');
-        el.className = 'date-item' +
-            (isWeekend ? ' is-weekend' : '') +
-            (isToday ? ' is-today' : '');
+        el.className = 'date-item' + (isWeekend ? ' is-weekend' : '') + (isToday ? ' is-today' : '');
 
         const nameEl = document.createElement('div');
         nameEl.className = 'day-name';
@@ -321,7 +339,7 @@ function renderHeader() {
     }
 }
 
-// ---------------- Meal list ----------------
+// ---------------- Meal list & Swipe Gestures ----------------
 
 async function renderMeals() {
     const wrapper = document.getElementById('calendar-wrapper');
@@ -388,6 +406,16 @@ async function renderMeals() {
         }
 
         const isToday = dateStr === today;
+
+        // Setup wrapper for swipe-to-delete
+        const wrapperEl = document.createElement('div');
+        wrapperEl.className = 'date-card-wrapper';
+        wrapperEl.dataset.date = dateStr;
+
+        const deleteBg = document.createElement('div');
+        deleteBg.className = 'swipe-delete-bg';
+        deleteBg.textContent = 'Delete';
+
         const card = document.createElement('div');
         card.className = 'date-card' + (isToday ? ' is-today' : '');
         card.dataset.date = dateStr;
@@ -397,17 +425,9 @@ async function renderMeals() {
 
         const label = document.createElement('span');
         label.className = 'card-label';
-        label.textContent = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' })
-            + (isToday ? ' · Today' : '');
-
-        const clearBtn = document.createElement('button');
-        clearBtn.className = 'clear-btn';
-        clearBtn.dataset.action = 'clear';
-        clearBtn.setAttribute('aria-label', 'Clear meal');
-        clearBtn.textContent = '×';
+        label.textContent = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' }) + (isToday ? ' · Today' : '');
 
         header.appendChild(label);
-        header.appendChild(clearBtn);
 
         const display = document.createElement('div');
         display.className = 'meal-display' + (mealName ? '' : ' empty');
@@ -416,8 +436,57 @@ async function renderMeals() {
 
         card.appendChild(header);
         card.appendChild(display);
-        wrapper.appendChild(card);
+        wrapperEl.appendChild(deleteBg);
+        wrapperEl.appendChild(card);
+        wrapper.appendChild(wrapperEl);
+
+        setupSwipe(card, wrapperEl, mealName);
     }
+}
+
+function setupSwipe(cardEl, wrapperEl, mealName) {
+    if (!mealName) return; // Only swipeable if a meal is planned
+
+    let startX = 0, startY = 0;
+    let currentX = 0;
+    let isSwiping = false;
+
+    cardEl.addEventListener('touchstart', e => {
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        isSwiping = false;
+        cardEl.style.transition = 'none';
+    }, { passive: true });
+
+    cardEl.addEventListener('touchmove', e => {
+        if (!startX || !startY) return;
+        
+        const deltaX = e.touches[0].clientX - startX;
+        const deltaY = e.touches[0].clientY - startY;
+
+        // Only engage if swiping left and horizontally
+        if (Math.abs(deltaX) > Math.abs(deltaY) && deltaX < 0) {
+            isSwiping = true;
+            currentX = Math.max(-100, deltaX); // Limit to -100px
+            cardEl.style.transform = `translateX(${currentX}px)`;
+        }
+    }, { passive: true });
+
+    cardEl.addEventListener('touchend', () => {
+        cardEl.style.transition = 'transform 0.2s cubic-bezier(0.25, 1, 0.5, 1)';
+        
+        if (isSwiping && currentX < -50) {
+            cardEl.style.transform = 'translateX(-100px)';
+            cardEl.classList.add('swiped');
+        } else {
+            cardEl.style.transform = 'translateX(0)';
+            cardEl.classList.remove('swiped');
+        }
+        
+        startX = 0;
+        startY = 0;
+        isSwiping = false;
+    });
 }
 
 // ---------------- Picker ----------------
@@ -490,66 +559,66 @@ async function openPicker(dateStr, readableDate) {
     renderFilteredList();
 }
 
+function pickRandomMeal() {
+    const allMeals = getMealsCache();
+    if (allMeals.length === 0) {
+        showToast('No meals to choose from', true);
+        return;
+    }
+    const randomMeal = allMeals[Math.floor(Math.random() * allMeals.length)].name;
+    selectMeal(randomMeal);
+}
+
 async function selectMeal(name) {
     const rawName = name.trim();
     if (!rawName) return;
 
     const formattedName = formatMealName(rawName);
     let finalName = formattedName;
+    
+    // Close modal immediately (Optimistic UI)
+    closePicker();
+
+    // Get old state for rollback
+    const oldCache = getCache();
+    const targetDate = activePickerDate;
+    
+    // Optimistic Update
+    oldCache[targetDate] = finalName;
+    setCache(oldCache);
+    renderMeals();
 
     if (navigator.onLine) {
-        const { data: existing, error: lookupError } = await _supabase
-            .from('meals')
-            .select('name')
-            .ilike('name', formattedName)
-            .maybeSingle();
-
-        if (lookupError) {
-            showToast('Could not check meal list', true);
-        }
-
+        // Check for duplicates in background
+        const { data: existing } = await _supabase.from('meals').select('name').ilike('name', formattedName).maybeSingle();
+        
         if (existing) {
             finalName = existing.name;
         } else {
-            // Check for similar meals before inserting
-            const { data: allMeals } = await _supabase.from('meals').select('name');
-            if (allMeals) {
-                const similar = getSimilarMeals(formattedName, allMeals);
-                if (similar.length > 0) {
-                    const similarNames = similar.slice(0, 4).map(m => m.name).join(', ') + (similar.length > 4 ? ` and ${similar.length - 4} more` : '');
-                    if (!confirm(`Similar meal(s) exist:\n\n${similarNames}\n\nAdd "${formattedName}" anyway?`)) {
-                        return;
-                    }
-                }
-            }
-
-            const { error: insertError } = await _supabase
-                .from('meals')
-                .insert({ name: formattedName });
-            if (insertError && insertError.code !== '23505') {
-                showToast('Could not save meal', true);
-            }
+            // We don't block the UI for duplicate checks, just insert
+            await _supabase.from('meals').insert({ name: formattedName });
         }
 
         const { error: upsertError } = await _supabase.from('calendar').upsert({
-            date: activePickerDate,
+            date: targetDate,
             meal_name: finalName
         });
 
         if (upsertError) {
-            showToast('Could not save to calendar', true);
-            return;
+            // Revert on failure
+            const revertCache = getCache();
+            delete revertCache[targetDate]; // Roughly revert; alternatively we could save the specific old meal
+            setCache(revertCache);
+            renderMeals();
+            showToast('Save failed. Check connection.', true);
+        } else {
+            removeFromQueue({ type: 'upsert-calendar', payload: { date: targetDate } });
         }
-
-        removeFromQueue({ type: 'upsert-calendar', payload: { date: activePickerDate } });
     } else {
         enqueue({ type: 'insert-meal', payload: { name: formattedName } });
-        enqueue({ type: 'upsert-calendar', payload: { date: activePickerDate, meal_name: finalName } });
+        enqueue({ type: 'upsert-calendar', payload: { date: targetDate, meal_name: finalName } });
         showToast('Saved offline — will sync');
     }
-
-    closePicker();
-    renderMeals();
 }
 
 function closePicker() {
@@ -562,9 +631,19 @@ function closePicker() {
 async function deleteEntry(dateStr) {
     if (!confirm('Are you sure you want to remove this meal from the calendar?')) return;
 
+    const oldCache = getCache();
+    const oldMeal = oldCache[dateStr];
+    delete oldCache[dateStr];
+    setCache(oldCache);
+    renderMeals(); // Optimistic UI
+
     if (navigator.onLine) {
         const { error } = await _supabase.from('calendar').delete().eq('date', dateStr);
         if (error) {
+            // Revert
+            oldCache[dateStr] = oldMeal;
+            setCache(oldCache);
+            renderMeals();
             showToast('Could not delete', true);
             return;
         }
@@ -573,7 +652,6 @@ async function deleteEntry(dateStr) {
         enqueue({ type: 'delete-calendar', payload: { date: dateStr } });
         showToast('Deleted offline — will sync');
     }
-    renderMeals();
 }
 
 // ---------------- Master meal editor ----------------
@@ -586,7 +664,6 @@ async function openMealEditor() {
     const container = document.getElementById('meal-list-edit');
     container.innerHTML = '';
 
-    // Add new meal row
     const addRow = document.createElement('div');
     addRow.className = 'editor-add-row';
     addRow.style.display = isMergeMode ? 'none' : 'flex';
@@ -596,7 +673,6 @@ async function openMealEditor() {
     `;
     container.appendChild(addRow);
 
-    // Merge toggle
     const mergeHeader = document.createElement('div');
     mergeHeader.style.display = 'flex';
     mergeHeader.style.justifyContent = 'space-between';
@@ -772,7 +848,6 @@ async function mergeMeals(selectedNames) {
     
     const formattedKeep = formatMealName(keepName);
     
-    // Check if the new name conflicts with a meal not selected
     const otherMeals = getMealsCache().filter(m => !selectedNames.includes(m.name));
     const similar = getSimilarMeals(formattedKeep, otherMeals);
     if (similar.length > 0) {
@@ -784,7 +859,6 @@ async function mergeMeals(selectedNames) {
     
     if (!confirm(`Merge ${selectedNames.length} meals into "${formattedKeep}"?\n\nAll calendar days using the other names will be updated.`)) return;
 
-    // 1. Update calendar entries
     const { error: e1 } = await _supabase.from('calendar')
         .update({ meal_name: formattedKeep })
         .in('meal_name', selectedNames);
@@ -794,7 +868,6 @@ async function mergeMeals(selectedNames) {
         return;
     }
     
-    // 2. Delete old meals
     const toDelete = selectedNames.filter(n => n !== formattedKeep);
     if (toDelete.length > 0) {
         const { error: e2 } = await _supabase.from('meals')
@@ -803,7 +876,6 @@ async function mergeMeals(selectedNames) {
         if (e2) showToast('Error deleting old meals', true);
     }
     
-    // 3. Ensure formattedKeep exists in meals
     const { data: existing } = await _supabase.from('meals').select('name').ilike('name', formattedKeep).maybeSingle();
     if (!existing) {
         const { error: e3 } = await _supabase.from('meals').insert({ name: formattedKeep });
