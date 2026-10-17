@@ -175,7 +175,6 @@ async function init() {
     // 2. Set up Realtime Sync
     _supabase.channel('calendar_changes')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar' }, payload => {
-            // Only refresh if the change happens on the currently viewed week
             const changedDate = payload.new?.date || payload.old?.date;
             if (!changedDate) return;
 
@@ -186,8 +185,6 @@ async function init() {
             const endISO = toLocalISO(dEnd);
 
             if (changedDate >= startISO && changedDate <= endISO) {
-                // Don't want to over-write optimistic UI if the user is currently interacting
-                // But for a partner adding a meal, this will seamlessly update
                 renderMeals(); 
             }
         })
@@ -407,7 +404,6 @@ async function renderMeals() {
 
         const isToday = dateStr === today;
 
-        // Setup wrapper for swipe-to-delete
         const wrapperEl = document.createElement('div');
         wrapperEl.className = 'date-card-wrapper';
         wrapperEl.dataset.date = dateStr;
@@ -445,7 +441,7 @@ async function renderMeals() {
 }
 
 function setupSwipe(cardEl, wrapperEl, mealName) {
-    if (!mealName) return; // Only swipeable if a meal is planned
+    if (!mealName) return; 
 
     let startX = 0, startY = 0;
     let currentX = 0;
@@ -464,10 +460,9 @@ function setupSwipe(cardEl, wrapperEl, mealName) {
         const deltaX = e.touches[0].clientX - startX;
         const deltaY = e.touches[0].clientY - startY;
 
-        // Only engage if swiping left and horizontally
         if (Math.abs(deltaX) > Math.abs(deltaY) && deltaX < 0) {
             isSwiping = true;
-            currentX = Math.max(-100, deltaX); // Limit to -100px
+            currentX = Math.max(-100, deltaX); 
             cardEl.style.transform = `translateX(${currentX}px)`;
         }
     }, { passive: true });
@@ -576,26 +571,26 @@ async function selectMeal(name) {
     const formattedName = formatMealName(rawName);
     let finalName = formattedName;
     
-    // Close modal immediately (Optimistic UI)
+    // Capture the date BEFORE closing the modal!
+    const targetDate = activePickerDate;
+    if (!targetDate) return;
+
+    // Close modal immediately
     closePicker();
 
-    // Get old state for rollback
-    const oldCache = getCache();
-    const targetDate = activePickerDate;
-    
-    // Optimistic Update
-    oldCache[targetDate] = finalName;
-    setCache(oldCache);
+    // Optimistic UI: Enqueue immediately so renderMeals picks it up
+    enqueue({ type: 'upsert-calendar', payload: { date: targetDate, meal_name: finalName } });
     renderMeals();
 
     if (navigator.onLine) {
-        // Check for duplicates in background
+        // Check for existing meal to standardise casing
         const { data: existing } = await _supabase.from('meals').select('name').ilike('name', formattedName).maybeSingle();
         
         if (existing) {
             finalName = existing.name;
+            enqueue({ type: 'upsert-calendar', payload: { date: targetDate, meal_name: finalName } });
+            renderMeals();
         } else {
-            // We don't block the UI for duplicate checks, just insert
             await _supabase.from('meals').insert({ name: formattedName });
         }
 
@@ -605,18 +600,17 @@ async function selectMeal(name) {
         });
 
         if (upsertError) {
+            console.error("Upsert error:", upsertError);
             // Revert on failure
-            const revertCache = getCache();
-            delete revertCache[targetDate]; // Roughly revert; alternatively we could save the specific old meal
-            setCache(revertCache);
-            renderMeals();
-            showToast('Save failed. Check connection.', true);
-        } else {
             removeFromQueue({ type: 'upsert-calendar', payload: { date: targetDate } });
+            renderMeals();
+            showToast(`Save failed: ${upsertError.message}`, true);
+        } else {
+            // Success! Remove from queue
+            removeFromQueue({ type: 'upsert-calendar', payload: { date: targetDate } });
+            renderMeals();
         }
     } else {
-        enqueue({ type: 'insert-meal', payload: { name: formattedName } });
-        enqueue({ type: 'upsert-calendar', payload: { date: targetDate, meal_name: finalName } });
         showToast('Saved offline — will sync');
     }
 }
@@ -631,25 +625,23 @@ function closePicker() {
 async function deleteEntry(dateStr) {
     if (!confirm('Are you sure you want to remove this meal from the calendar?')) return;
 
-    const oldCache = getCache();
-    const oldMeal = oldCache[dateStr];
-    delete oldCache[dateStr];
-    setCache(oldCache);
-    renderMeals(); // Optimistic UI
+    // Optimistic UI
+    enqueue({ type: 'delete-calendar', payload: { date: dateStr } });
+    renderMeals();
 
     if (navigator.onLine) {
         const { error } = await _supabase.from('calendar').delete().eq('date', dateStr);
         if (error) {
-            // Revert
-            oldCache[dateStr] = oldMeal;
-            setCache(oldCache);
+            console.error("Delete error:", error);
+            // Revert on failure
+            removeFromQueue({ type: 'delete-calendar', payload: { date: dateStr } });
             renderMeals();
-            showToast('Could not delete', true);
+            showToast(`Could not delete: ${error.message}`, true);
             return;
         }
-        removeFromQueue({ type: 'upsert-calendar', payload: { date: dateStr } });
+        removeFromQueue({ type: 'delete-calendar', payload: { date: dateStr } });
+        renderMeals();
     } else {
-        enqueue({ type: 'delete-calendar', payload: { date: dateStr } });
         showToast('Deleted offline — will sync');
     }
 }
@@ -786,7 +778,7 @@ async function addNewMeal() {
 
         const { error } = await _supabase.from('meals').insert({ name: formatted });
         if (error && error.code !== '23505') {
-            showToast('Could not add meal', true);
+            showToast(`Could not add meal: ${error.message}`, true);
             return;
         }
     } else {
@@ -825,7 +817,7 @@ async function deleteFromMaster(name) {
     if (navigator.onLine) {
         const { error } = await _supabase.from('meals').delete().eq('name', name);
         if (error) {
-            showToast('Could not delete meal', true);
+            showToast(`Could not delete meal: ${error.message}`, true);
             return;
         }
     } else {
@@ -864,7 +856,7 @@ async function mergeMeals(selectedNames) {
         .in('meal_name', selectedNames);
         
     if (e1) {
-        showToast('Error updating calendar', true);
+        showToast(`Error updating calendar: ${e1.message}`, true);
         return;
     }
     
@@ -873,13 +865,13 @@ async function mergeMeals(selectedNames) {
         const { error: e2 } = await _supabase.from('meals')
             .delete()
             .in('name', toDelete);
-        if (e2) showToast('Error deleting old meals', true);
+        if (e2) showToast(`Error deleting old meals: ${e2.message}`, true);
     }
     
     const { data: existing } = await _supabase.from('meals').select('name').ilike('name', formattedKeep).maybeSingle();
     if (!existing) {
         const { error: e3 } = await _supabase.from('meals').insert({ name: formattedKeep });
-        if (e3 && e3.code !== '23505') showToast('Error adding new meal name', true);
+        if (e3 && e3.code !== '23505') showToast(`Error adding new meal name: ${e3.message}`, true);
     }
     
     showToast('Meals merged successfully');
