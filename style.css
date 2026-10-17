@@ -211,10 +211,35 @@ main {
 }
 
 /* Popular meals */
+.range-selector {
+    display: flex;
+    background: #e5e5ea;
+    border-radius: 8px;
+    padding: 2px;
+    margin-bottom: 15px;
+}
+.range-selector button {
+    flex: 1;
+    background: transparent;
+    border: none;
+    padding: 6px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #8e8e93;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.range-selector button.active {
+    background: white;
+    color: #000;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
 .popular-subtitle {
     font-size: 13px;
     color: #8e8e93;
-    margin: -10px 0 15px;
+    margin: 0 0 15px;
 }
 .popular-row {
     display: flex;

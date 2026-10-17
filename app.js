@@ -148,6 +148,13 @@ async function init() {
     document.getElementById('manage-meals-btn').addEventListener('click', openMealEditor);
     document.getElementById('popular-btn').addEventListener('click', openPopular);
 
+    document.getElementById('popular-range-selector').addEventListener('click', e => {
+        const btn = e.target.closest('button');
+        if (btn && btn.dataset.range && btn.dataset.range !== currentPopularRange) {
+            renderPopularList(btn.dataset.range);
+        }
+    });
+
     document.querySelectorAll('[data-close]').forEach(btn => {
         btn.addEventListener('click', () => {
             document.getElementById(btn.dataset.close).style.display = 'none';
@@ -624,10 +631,26 @@ async function deleteFromMaster(name) {
 
 // ---------------- Popular meals ----------------
 
+let currentPopularRange = '30';
+let popularRequestId = 0;
+
 async function openPopular() {
-    const modal = document.getElementById('popular-modal');
+    document.getElementById('popular-modal').style.display = 'block';
+    renderPopularList(currentPopularRange);
+}
+
+async function renderPopularList(range) {
+    currentPopularRange = range;
+    const reqId = ++popularRequestId;
+
     const container = document.getElementById('popular-list');
-    modal.style.display = 'block';
+    const selector = document.getElementById('popular-range-selector');
+
+    // Update segmented control UI
+    selector.querySelectorAll('button').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.range === range);
+    });
+
     container.innerHTML = '<div class="popular-empty">Loading…</div>';
 
     if (!navigator.onLine) {
@@ -635,18 +658,31 @@ async function openPopular() {
         return;
     }
 
-    // Last 60 days, inclusive of today
+    const endISO = todayISO();
     const dStart = new Date();
     dStart.setHours(0, 0, 0, 0);
-    dStart.setDate(dStart.getDate() - 59);
-    const startISO = toLocalISO(dStart);
-    const endISO = todayISO();
 
-    const { data, error } = await _supabase
-        .from('calendar')
+    let startISO = null;
+    if (range === '30') {
+        dStart.setDate(dStart.getDate() - 29);
+        startISO = toLocalISO(dStart);
+    } else if (range === '90') {
+        dStart.setDate(dStart.getDate() - 89);
+        startISO = toLocalISO(dStart);
+    }
+
+    let query = _supabase.from('calendar')
         .select('date, meal_name')
-        .gte('date', startISO)
         .lte('date', endISO);
+
+    if (startISO) {
+        query = query.gte('date', startISO);
+    }
+
+    const { data, error } = await query;
+
+    // Abort if a newer request was started while this one was waiting
+    if (reqId !== popularRequestId) return;
 
     if (error) {
         showToast('Could not load popular meals', true);
@@ -659,7 +695,7 @@ async function openPopular() {
     for (const op of getQueue()) {
         if (op.type === 'upsert-calendar') {
             const date = op.payload.date;
-            if (date >= startISO && date <= endISO) {
+            if ((!startISO || date >= startISO) && date <= endISO) {
                 queuedDates.set(date, op.payload.meal_name);
             }
         }
@@ -684,7 +720,7 @@ async function openPopular() {
     container.innerHTML = '';
 
     if (ranked.length === 0) {
-        container.innerHTML = '<div class="popular-empty">No meals planned in the last 60 days.</div>';
+        container.innerHTML = '<div class="popular-empty">No meals planned in this period.</div>';
         return;
     }
 
