@@ -27,7 +27,6 @@ function formatMealName(raw) {
         .join(' ');
 }
 
-// Checks for similar meals by looking for shared significant words
 function getSimilarMeals(newName, existingMeals) {
     const normalize = s => s.toLowerCase().replace(/ & /g, ' and ').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
     const target = normalize(newName);
@@ -165,14 +164,12 @@ function setMealsCache(m) { localStorage.setItem(MEALS_CACHE_KEY, JSON.stringify
 async function init() {
     currentViewDate.setHours(0, 0, 0, 0);
 
-    // 1. Supabase Anonymous Auth (Silent Login)
     try {
         await _supabase.auth.signInAnonymously();
     } catch (err) {
         console.warn("Anonymous auth failed. Ensure it's enabled in Supabase.", err);
     }
 
-    // 2. Set up Realtime Sync
     _supabase.channel('calendar_changes')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar' }, payload => {
             const changedDate = payload.new?.date || payload.old?.date;
@@ -190,7 +187,6 @@ async function init() {
         })
         .subscribe();
 
-    // 3. UI Event Listeners
     document.querySelectorAll('.nav-arrow').forEach(btn => {
         btn.addEventListener('click', () => moveWeek(btn.dataset.dir === 'prev' ? -7 : 7));
     });
@@ -227,18 +223,13 @@ async function init() {
     document.getElementById('calendar-wrapper').addEventListener('click', e => {
         if (suppressClick) return;
         
-        // Handle Swipe Delete Button Click
-        if (e.target.classList.contains('swipe-delete-bg')) {
-            const card = e.target.closest('.date-card-wrapper');
-            if (card) deleteEntry(card.dataset.date);
-            return;
-        }
-
         const card = e.target.closest('.date-card');
         if (!card) return;
         const dateStr = card.dataset.date;
 
-        if (e.target.dataset.action === 'pick') {
+        if (e.target.dataset.action === 'clear') {
+            deleteEntry(dateStr);
+        } else if (e.target.dataset.action === 'pick') {
             openPicker(
                 dateStr,
                 parseLocalISO(dateStr).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' })
@@ -336,7 +327,7 @@ function renderHeader() {
     }
 }
 
-// ---------------- Meal list & Swipe Gestures ----------------
+// ---------------- Meal list ----------------
 
 async function renderMeals() {
     const wrapper = document.getElementById('calendar-wrapper');
@@ -403,15 +394,6 @@ async function renderMeals() {
         }
 
         const isToday = dateStr === today;
-
-        const wrapperEl = document.createElement('div');
-        wrapperEl.className = 'date-card-wrapper';
-        wrapperEl.dataset.date = dateStr;
-
-        const deleteBg = document.createElement('div');
-        deleteBg.className = 'swipe-delete-bg';
-        deleteBg.textContent = 'Delete';
-
         const card = document.createElement('div');
         card.className = 'date-card' + (isToday ? ' is-today' : '');
         card.dataset.date = dateStr;
@@ -423,7 +405,14 @@ async function renderMeals() {
         label.className = 'card-label';
         label.textContent = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' }) + (isToday ? ' · Today' : '');
 
+        const clearBtn = document.createElement('button');
+        clearBtn.className = 'clear-btn';
+        clearBtn.dataset.action = 'clear';
+        clearBtn.setAttribute('aria-label', 'Clear meal');
+        clearBtn.textContent = '×';
+
         header.appendChild(label);
+        header.appendChild(clearBtn);
 
         const display = document.createElement('div');
         display.className = 'meal-display' + (mealName ? '' : ' empty');
@@ -432,56 +421,8 @@ async function renderMeals() {
 
         card.appendChild(header);
         card.appendChild(display);
-        wrapperEl.appendChild(deleteBg);
-        wrapperEl.appendChild(card);
-        wrapper.appendChild(wrapperEl);
-
-        setupSwipe(card, wrapperEl, mealName);
+        wrapper.appendChild(card);
     }
-}
-
-function setupSwipe(cardEl, wrapperEl, mealName) {
-    if (!mealName) return; 
-
-    let startX = 0, startY = 0;
-    let currentX = 0;
-    let isSwiping = false;
-
-    cardEl.addEventListener('touchstart', e => {
-        startX = e.touches[0].clientX;
-        startY = e.touches[0].clientY;
-        isSwiping = false;
-        cardEl.style.transition = 'none';
-    }, { passive: true });
-
-    cardEl.addEventListener('touchmove', e => {
-        if (!startX || !startY) return;
-        
-        const deltaX = e.touches[0].clientX - startX;
-        const deltaY = e.touches[0].clientY - startY;
-
-        if (Math.abs(deltaX) > Math.abs(deltaY) && deltaX < 0) {
-            isSwiping = true;
-            currentX = Math.max(-100, deltaX); 
-            cardEl.style.transform = `translateX(${currentX}px)`;
-        }
-    }, { passive: true });
-
-    cardEl.addEventListener('touchend', () => {
-        cardEl.style.transition = 'transform 0.2s cubic-bezier(0.25, 1, 0.5, 1)';
-        
-        if (isSwiping && currentX < -50) {
-            cardEl.style.transform = 'translateX(-100px)';
-            cardEl.classList.add('swiped');
-        } else {
-            cardEl.style.transform = 'translateX(0)';
-            cardEl.classList.remove('swiped');
-        }
-        
-        startX = 0;
-        startY = 0;
-        isSwiping = false;
-    });
 }
 
 // ---------------- Picker ----------------
@@ -571,7 +512,7 @@ async function selectMeal(name) {
     const formattedName = formatMealName(rawName);
     let finalName = formattedName;
     
-    // Capture the date BEFORE closing the modal!
+    // Capture the date BEFORE closing the modal
     const targetDate = activePickerDate;
     if (!targetDate) return;
 

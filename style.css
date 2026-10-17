@@ -83,48 +83,18 @@ main {
     padding: 6px 12px 8px;
 }
 
-/* Swipe to delete styles */
-.date-card-wrapper {
-    position: relative;
-    overflow: hidden;
-    border-radius: 10px;
-    background: var(--danger);
-    flex: 1 1 0;
-    display: flex;
-    flex-direction: column;
-}
-
-.swipe-delete-bg {
-    position: absolute;
-    top: 0; right: 0; bottom: 0;
-    width: 100px;
-    background: var(--danger);
-    color: white;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 600;
-    font-size: 15px;
-    z-index: 1;
-}
-
 .date-card {
-    flex: 1 1 auto;
+    flex: 1 1 0;
     display: flex;
     flex-direction: column;
     justify-content: center;
     background: var(--card);
     padding: 8px 14px;
+    border-radius: 10px;
     box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     border-left: 3px solid transparent;
-    position: relative;
-    z-index: 2;
-    transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1);
-    transform: translateX(0);
-    touch-action: pan-y; /* Allow vertical scrolling, capture horizontal */
 }
 .date-card.is-today { border-left-color: var(--accent); }
-.date-card.swiped { transform: translateX(-100px); }
 
 .card-header {
     display: flex;
@@ -150,7 +120,6 @@ main {
     color: #c7c7cc; font-size: 20px;
     padding: 0 5px; cursor: pointer;
     line-height: 1;
-    display: none; /* Hidden in favour of swipe */
 }
 
 .bottom-nav {
