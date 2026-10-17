@@ -31,25 +31,42 @@ function formatMealName(raw) {
 function getSimilarMeals(newName, existingMeals) {
     const normalize = s => s.toLowerCase().replace(/ & /g, ' and ').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
     const target = normalize(newName);
-    const targetWords = new Set(target.split(' ').filter(w => w.length > 2)); // ignore small words
+    if (!target) return [];
+
+    const targetWords = target.split(' ').filter(w => w.length > 2);
+    
+    // If there are no significant words, just do a basic equality check
+    if (targetWords.length === 0) {
+        return existingMeals.filter(m => normalize(m.name) === target);
+    }
 
     return existingMeals.filter(m => {
         const current = normalize(m.name);
         if (current === target) return true;
-        
-        const currentWords = new Set(current.split(' ').filter(w => w.length > 2));
-        let intersection = 0;
-        for (const w of targetWords) {
-            if (currentWords.has(w)) intersection++;
+
+        const currentWords = current.split(' ').filter(w => w.length > 2);
+        if (currentWords.length === 0) return false;
+
+        // Count how many words overlap between the two names
+        let matches = 0;
+        for (const tw of targetWords) {
+            if (currentWords.some(cw => {
+                if (tw === cw) return true;
+                // Allow "veg" to match "vegetables" (starts with)
+                if (tw.length > 3 && cw.length > 3) {
+                    if (tw.startsWith(cw) || cw.startsWith(tw)) return true;
+                }
+                return false;
+            })) {
+                matches++;
+            }
         }
-        
-        // If one contains the other, or they share almost all words
-        if (intersection > 0 && (current.includes(target) || target.includes(current))) return true;
-        
-        const minWords = Math.min(targetWords.size, currentWords.size);
-        if (minWords > 0 && intersection >= minWords - 1) return true;
-        
-        return false;
+
+        const minLen = Math.min(targetWords.length, currentWords.length);
+        const maxLen = Math.max(targetWords.length, currentWords.length);
+
+        // Require that ALL words of the shorter name match, AND the length difference is at most 1.
+        return matches === minLen && (maxLen - minLen) <= 1;
     });
 }
 
@@ -498,8 +515,8 @@ async function selectMeal(name) {
             if (allMeals) {
                 const similar = getSimilarMeals(formattedName, allMeals);
                 if (similar.length > 0) {
-                    const similarNames = similar.map(m => m.name).join(', ');
-                    if (!confirm(`Warning: Similar meals exist: ${similarNames}.\n\nAdd "${formattedName}" anyway?`)) {
+                    const similarNames = similar.slice(0, 3).map(m => m.name).join(', ') + (similar.length > 3 ? '...' : '');
+                    if (!confirm(`Similar meal(s) exist: ${similarNames}.\n\nAdd "${formattedName}" anyway?`)) {
                         return;
                     }
                 }
@@ -683,8 +700,8 @@ async function addNewMeal() {
         if (allMeals) {
             const similar = getSimilarMeals(formatted, allMeals);
             if (similar.length > 0) {
-                const similarNames = similar.map(m => m.name).join(', ');
-                if (!confirm(`Warning: Similar meals exist: ${similarNames}.\n\nAdd "${formatted}" anyway?`)) {
+                const similarNames = similar.slice(0, 3).map(m => m.name).join(', ') + (similar.length > 3 ? '...' : '');
+                if (!confirm(`Similar meal(s) exist: ${similarNames}.\n\nAdd "${formatted}" anyway?`)) {
                     return;
                 }
             }
@@ -699,8 +716,8 @@ async function addNewMeal() {
         const localMeals = getMealsCache();
         const similar = getSimilarMeals(formatted, localMeals);
         if (similar.length > 0) {
-            const similarNames = similar.map(m => m.name).join(', ');
-            if (!confirm(`Warning: Similar meals exist: ${similarNames}.\n\nAdd "${formatted}" anyway?`)) {
+            const similarNames = similar.slice(0, 3).map(m => m.name).join(', ') + (similar.length > 3 ? '...' : '');
+            if (!confirm(`Similar meal(s) exist: ${similarNames}.\n\nAdd "${formatted}" anyway?`)) {
                 return;
             }
         }
@@ -758,7 +775,7 @@ async function mergeMeals(selectedNames) {
     const otherMeals = getMealsCache().filter(m => !selectedNames.includes(m.name));
     const similar = getSimilarMeals(formattedKeep, otherMeals);
     if (similar.length > 0) {
-        const similarNames = similar.map(m => m.name).join(', ');
+        const similarNames = similar.slice(0, 3).map(m => m.name).join(', ') + (similar.length > 3 ? '...' : '');
         if (!confirm(`Warning: Similar meals exist outside your selection: ${similarNames}.\n\nUse "${formattedKeep}" anyway?`)) {
             return;
         }
